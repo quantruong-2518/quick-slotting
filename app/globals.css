@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+/* Token dùng chung cho mọi màn hình. Thiếu thì thêm vào đây, không viết mã màu/cỡ tuỳ ý trong component. */
+@theme {
+  --font-sans: var(--font-vietnam), system-ui, sans-serif;
+  --font-mono: var(--font-code), ui-monospace, Menlo, monospace;
+
+  /* Cỡ chữ riêng; ngoài ra dùng text-xs/sm/lg/xl/2xl mặc định. */
+  --text-caption: 13px; /* chú thích, trạng thái phụ */
+  --text-body: 15px; /* chữ chính của nút, nhãn, bảng */
+  --text-title: 22px; /* số liệu nổi bật */
+
+  /* Màu thương hiệu */
+  --color-brand: #2451d6;
+  --color-brand-strong: #1c42b3; /* hover nút chính */
+  --color-brand-soft: #dde6fb; /* nền được chọn, vùng khoang B1 */
+  --color-brand-ink: #1d44b8; /* chữ màu brand trên nền sáng */
+  --color-brand-line: #9fb0d6; /* viền đứt nét: ô trống, vùng thả file */
+  --color-brand-wash: #f5f8ff; /* nền vùng thả file */
+
+  /* Nền và chữ */
+  --color-page: #f2f4f8; /* nền trang */
+  --color-subtle: #f3f5f9; /* nền khối trong card */
+  --color-control: #e9edf4; /* nền ô nhập, nút phụ */
+  --color-control-hover: #dfe4ee;
+  --color-ink: #0f172a; /* chữ chính */
+  --color-muted: #46516a; /* chữ phụ */
+  --color-faint: #5d6882; /* chữ mờ, vẫn đủ tương phản */
+  --color-line: rgb(15 30 60 / 0.08); /* đường kẻ */
+  --color-line-strong: #c5cee0; /* viền ô nhập lớn */
+
+  /* Sơ đồ */
+  --color-zone: #e2e7f0; /* nền khoang B3 */
+  --color-zone-hover: #d9dfea;
+  --color-zone-active: #d3def7; /* khoang đang xem */
+  --color-seat-off: #d3d8e0; /* ghế người khác (trang tra cứu) */
+
+  /* Trạng thái: chữ + nền */
+  --color-ok: #0b7040;
+  --color-ok-bg: #dcf3e6;
+  --color-warn: #8a4b00;
+  --color-warn-bg: #fcefd9;
+  --color-danger: #b42330;
+  --color-danger-bg: #fbe3e4;
+
+  --radius-chip: 4px;
+  --radius-control: 6px;
+  --radius-card: 8px;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 6px 20px rgb(15 23 42 / 0.05);
+  --shadow-raised: 0 1px 2px rgb(15 23 42 / 0.12); /* nút đang chọn trong Segmented */
+}
+
+/* Ô nhập chuẩn: nền control, viền brand khi focus. Tự thêm cao/rộng/cỡ chữ. */
+@utility field {
+  @apply rounded-control bg-control outline-none focus:ring-2 focus:ring-brand;
+}
+
+/* Chừa phần tai thỏ/thanh home trên điện thoại. */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-page);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 3px solid rgb(36 81 214 / 0.45);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
