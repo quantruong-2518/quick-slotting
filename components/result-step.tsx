@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { Card, CheckIcon, DownloadIcon, Notice, Pill } from "./ui/card";
 import { Segmented } from "./ui/segmented";
 import { SeatZones } from "./seat-zones";
 import { unitColor } from "@/lib/colors";
 import { downloadBlob, resultXlsx } from "@/lib/excel";
-import { encodeShare } from "@/lib/share";
+import { buildSharePayload } from "@/lib/room-share";
+import { fingerprint, loadShare, publishRoom, type SavedShare } from "@/lib/share-client";
+import { ShareDialog } from "./share-dialog";
 import type { Adjacency, Person, RoomConfig, Seat, SpareMode, Unit } from "@/lib/types";
 
 export interface ResultState {
@@ -34,7 +36,10 @@ export function ResultStep({
   onBack: () => void;
 }) {
   const [zone, setZone] = useState(0);
-  const [copied, setCopied] = useState(false);
+  const [share, setShare] = useState<SavedShare | null>(() => loadShare(room.id));
+  const [dialog, setDialog] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
   const indexOf = new Map(seats.map((s, i) => [s.key, i]));
   const empty = seats.length - people.length;
 
@@ -44,20 +49,28 @@ export function ResultStep({
         .filter((x) => x.s.block === zone)
     : [];
 
-  async function copyLink() {
-    if (!result) return;
-    const data = encodeShare({
-      v: 1,
-      title: room.name,
-      room: { name: room.name, blocks: room.blocks, rows: room.rows, cols: room.cols, style: room.style, start: room.start, off: room.off },
-      rows: seats.flatMap((s, i) => {
-        const p = result.items[i] >= 0 ? people[result.items[i]] : null;
-        return p ? [[p.code, s.number, p.name, units[p.unitId].name] as [string, number, string, string]] : [];
-      }),
-    });
-    await navigator.clipboard.writeText(`${location.origin}/tra-cuu#${data}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+  const payload = useMemo(
+    () => (result ? buildSharePayload(room, seats, result.items, people, units) : null),
+    [room, seats, result, people, units],
+  );
+  const outdated = !!share && !!payload && fingerprint(payload) !== share.fp;
+
+  async function publish() {
+    if (!payload) return;
+    setSharing(true);
+    setShareError(null);
+    try {
+      setShare(await publishRoom(room.id, payload));
+    } catch (e) {
+      setShareError(e instanceof Error ? e.message : "Không chia sẻ được, hãy thử lại.");
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  function openShare() {
+    setDialog(true);
+    if (!share || share.expiresAt <= Date.now()) void publish(); // mã hết hạn thì tạo mã mới
   }
 
   return (
@@ -174,9 +187,10 @@ export function ResultStep({
       </Card>
       <div className="flex items-center justify-between">
         <Button size="lg" onClick={onBack}>Quay lại</Button>
-        <div className="flex gap-3">
-          <Button size="lg" disabled={!result || running} onClick={copyLink}>
-            {copied ? <><CheckIcon /> Đã sao chép</> : "Sao chép link tra cứu"}
+        <div className="flex items-center gap-3">
+          {outdated && !dialog && <Pill tone="warn">Bản chia sẻ chưa cập nhật</Pill>}
+          <Button size="lg" disabled={!result || running || sharing} onClick={openShare}>
+            {sharing ? "Đang chia sẻ…" : "Chia sẻ phòng thi"}
           </Button>
           <Button
             variant="primary"
@@ -188,6 +202,17 @@ export function ResultStep({
           </Button>
         </div>
       </div>
+      {dialog && (
+        <ShareDialog
+          roomName={room.name}
+          id={share?.id ?? ""}
+          outdated={outdated}
+          busy={sharing}
+          error={shareError}
+          onUpdate={publish}
+          onClose={() => setDialog(false)}
+        />
+      )}
     </>
   );
 }

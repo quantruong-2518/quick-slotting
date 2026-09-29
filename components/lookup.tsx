@@ -1,80 +1,137 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { Logo } from "./ui/card";
 import { SeatZones } from "./seat-zones";
 import { buildSeats, seatPosition } from "@/lib/room";
-import { decodeShare } from "@/lib/share";
 import { normalizeCode } from "@/lib/people";
+import { parseRoomId } from "@/lib/room-share";
+import type { RoomConfig } from "@/lib/types";
 
-const subscribeHash = (cb: () => void) => {
-  window.addEventListener("hashchange", cb);
-  return () => window.removeEventListener("hashchange", cb);
-};
+const NOT_FOUND = "Không tìm thấy phòng thi (mã sai hoặc đã hết hạn).";
 
-export default function Lookup() {
-  const hash = useSyncExternalStore(subscribeHash, () => location.hash, () => "");
-  const data = useMemo(() => (hash ? decodeShare(hash) : null), [hash]);
-  const seats = useMemo(() => (data ? buildSeats({ id: "share", ...data.room }) : []), [data]);
+interface Found {
+  title: string;
+  room: Omit<RoomConfig, "id">;
+  person: { code: string; seat: number; name: string; unit: string };
+}
+type Meta = { state: "loading" } | { state: "error"; message: string } | { state: "ready"; title: string };
 
+export default function Lookup({ roomId }: { roomId: string | null }) {
+  const [meta, setMeta] = useState<Meta>(roomId ? { state: "loading" } : { state: "ready", title: "" });
+  const [roomInput, setRoomInput] = useState("");
   const [code, setCode] = useState("");
-  const [found, setFound] = useState<number | null>(null);
-  const [notFound, setNotFound] = useState(false);
+  const [found, setFound] = useState<Found | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [showMap, setShowMap] = useState(false);
 
-  if (!hash) return null;
-  if (!data) {
+  useEffect(() => {
+    if (!roomId) return;
+    let alive = true;
+    fetch(`/api/phong/${encodeURIComponent(roomId)}`, { cache: "no-store" })
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!alive) return;
+        setMeta(r.ok ? { state: "ready", title: d.title } : { state: "error", message: d.error ?? NOT_FOUND });
+      })
+      .catch(() => alive && setMeta({ state: "error", message: "Không kết nối được mạng. Kiểm tra lại rồi thử lại." }));
+    return () => { alive = false; };
+  }, [roomId]);
+
+  const seats = useMemo(() => (found ? buildSeats({ id: "share", ...found.room }) : []), [found]);
+  const seat = found ? seats.find((s) => s.number === found.person.seat) ?? null : null;
+  const pos = seat ? seatPosition(seat) : null;
+  const typedCode = normalizeCode(code);
+
+  async function find() {
+    const id = roomId ?? parseRoomId(roomInput);
+    if (!id) return setError("Mã phòng gồm 6 ký tự, ví dụ K7M2QX. Kiểm tra lại mã trên giấy hoặc mã QR.");
+    if (!typedCode) return setError("Hãy nhập Mã CC của bạn.");
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/phong/${encodeURIComponent(id)}?ma=${encodeURIComponent(typedCode)}`, { cache: "no-store" });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { setFound(d); setShowMap(false); }
+      else setError(d.error ?? "Có lỗi xảy ra, hãy thử lại sau.");
+    } catch {
+      setError("Không kết nối được mạng. Kiểm tra lại rồi thử lại.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (meta.state !== "ready") {
     return (
       <Shell>
         <main className="flex flex-1 flex-col gap-3 px-6 py-10">
-          <h1 className="text-2xl font-bold">Link không hợp lệ</h1>
-          <p className="text-muted">Link tra cứu bị thiếu hoặc hỏng. Hãy xin lại link từ người tổ chức kỳ thi.</p>
+          {meta.state === "loading" ? (
+            <p className="text-muted">Đang mở phòng thi…</p>
+          ) : (
+            <>
+              <h1 className="text-2xl font-bold">Không mở được phòng thi</h1>
+              <p className="text-muted">{meta.message}</p>
+              <Link href="/tra-cuu" className="mt-2 inline-flex h-12 items-center self-start rounded-control bg-control px-5 font-semibold">
+                Nhập mã phòng khác
+              </Link>
+            </>
+          )}
         </main>
       </Shell>
     );
   }
 
-  const row = found !== null ? data.rows[found] : null;
-  const seat = row ? seats.find((s) => s.number === row[1]) ?? null : null;
-  const pos = seat ? seatPosition(seat) : null;
-
-  function find() {
-    const c = normalizeCode(code);
-    const i = data!.rows.findIndex(([cc]) => normalizeCode(cc) === c || normalizeCode(cc).replace(/^CC/, "") === c.replace(/^CC/, ""));
-    if (i >= 0) { setFound(i); setNotFound(false); setShowMap(false); }
-    else setNotFound(true);
-  }
-
-  if (!row || !seat || !pos) {
+  if (!found || !seat || !pos) {
+    const title = meta.title;
     return (
       <Shell>
         <section className="flex flex-col gap-7 bg-brand px-6 pt-6 pb-9 text-white">
-          <Brand title={data.title} />
+          <Brand title={title} />
           <div className="flex flex-col gap-2">
             <h1 className="text-[34px] leading-10 font-bold tracking-tight">Tìm chỗ ngồi</h1>
-            <p className="text-white/90">Nhập mã công chức để biết khoang, hàng và ghế của bạn.</p>
+            <p className="text-white/90">
+              {roomId ? "Nhập Mã CC để biết khoang, hàng và ghế của bạn." : "Nhập mã phòng và Mã CC để biết khoang, hàng và ghế của bạn."}
+            </p>
           </div>
         </section>
         <form
           className="flex flex-1 flex-col"
-          onSubmit={(e) => { e.preventDefault(); find(); }}
+          onSubmit={(e) => { e.preventDefault(); if (!busy) void find(); }}
         >
           <div className="flex flex-1 flex-col gap-2.5 px-6 py-8">
-            <label htmlFor="ma" className="text-body font-semibold">Mã công chức</label>
+            {!roomId && (
+              <>
+                <label htmlFor="phong" className="text-body font-semibold">Mã phòng</label>
+                <input
+                  id="phong"
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  placeholder="K7M2QX"
+                  maxLength={12}
+                  value={roomInput}
+                  onChange={(e) => { setRoomInput(e.target.value); setError(null); }}
+                  className="h-16 rounded-control bg-page px-4 font-mono text-2xl tracking-wider outline-none ring-2 ring-line-strong focus:ring-brand"
+                />
+                <p className="mb-4 text-sm text-faint">Mã phòng gồm 6 ký tự, có trên giấy hoặc mã QR.</p>
+              </>
+            )}
+            <label htmlFor="ma" className="text-body font-semibold">Mã CC</label>
             <input
               id="ma"
               autoComplete="off"
               autoCapitalize="characters"
               placeholder="CC1038"
               value={code}
-              onChange={(e) => { setCode(e.target.value); setNotFound(false); }}
-              className={`h-16 rounded-control bg-page px-4 font-mono text-2xl tracking-wider outline-none ring-2 ${notFound ? "ring-danger" : "ring-line-strong focus:ring-brand"}`}
+              onChange={(e) => { setCode(e.target.value); setError(null); }}
+              className={`h-16 rounded-control bg-page px-4 font-mono text-2xl tracking-wider outline-none ring-2 ${error ? "ring-danger" : "ring-line-strong focus:ring-brand"}`}
             />
-            {notFound && <p className="text-body text-danger">Không tìm thấy mã này. Kiểm tra lại hoặc hỏi giám thị.</p>}
-            <p className="text-sm text-faint">Mã có trên giấy báo dự thi.</p>
+            {error && <p role="alert" className="text-body text-danger">{error}</p>}
+            <p className="text-sm text-faint">Mã CC có trên giấy báo dự thi.</p>
           </div>
-          <button type="submit" className="h-17 shrink-0 bg-brand pb-safe text-lg font-semibold text-white">
-            Xem chỗ ngồi
+          <button type="submit" disabled={busy} className="h-17 shrink-0 bg-brand pb-safe text-lg font-semibold text-white disabled:opacity-60">
+            {busy ? "Đang tìm…" : "Xem chỗ ngồi"}
           </button>
         </form>
       </Shell>
@@ -84,7 +141,7 @@ export default function Lookup() {
   return (
     <Shell>
       <section className="flex flex-col gap-3.5 bg-brand px-6 pt-3 pb-6 text-white">
-        <button type="button" onClick={() => setFound(null)} className="-ml-1.5 inline-flex h-11 items-center gap-1.5 self-start px-1.5 text-body font-medium">
+        <button type="button" onClick={() => { setFound(null); setCode(""); }} className="-ml-1.5 inline-flex h-11 items-center gap-1.5 self-start px-1.5 text-body font-medium">
           <svg viewBox="0 0 18 18" fill="none" aria-hidden="true" className="size-4.5">
             <path d="M11 3.5L5.5 9l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -92,9 +149,9 @@ export default function Lookup() {
         </button>
         <div className="flex items-end justify-between gap-3">
           <div className="flex min-w-0 flex-col">
-            <span className="text-title leading-7 font-semibold">{row[2]}</span>
-            <span className="text-sm text-white/90">{row[0]}</span>
-            <span className="text-sm text-white/90">{row[3]}</span>
+            <span className="text-title leading-7 font-semibold">{found.person.name}</span>
+            <span className="text-sm text-white/90">{found.person.code}</span>
+            <span className="text-sm text-white/90">{found.person.unit}</span>
           </div>
           <div className="flex shrink-0 flex-col items-end">
             <span className="text-sm text-white/90">Máy số</span>
@@ -117,7 +174,7 @@ export default function Lookup() {
         {showMap ? (
           <div className="flex flex-col items-center gap-2.5 px-3">
             <SeatZones
-              room={{ id: "share", ...data.room }}
+              room={{ id: "share", ...found.room }}
               seats={seats}
               gap="gap-0.75"
               zoneGap="gap-2"
