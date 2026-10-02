@@ -1,29 +1,45 @@
 import { LIMITS } from "./room";
 import { normalizeCode } from "./people";
+import { MAX_ROOMS, MAX_SESSIONS } from "./sessions";
 import type { RoomConfig, Seat, Unit, Person } from "./types";
 
 /** Phòng thi chia sẻ: chỉ chứa dữ liệu cần để tra chỗ, không có id cục bộ. */
-export type SharedRoom = Omit<RoomConfig, "id">;
-/** [mã CC, số máy, họ tên, đơn vị] */
-export type PersonRow = [string, number, string, string];
+export type SharedRoom = Omit<RoomConfig, "id" | "reserve">;
+/** [mã CC, ca (từ 1), phòng (vị trí trong `rooms`), số máy, họ tên, đơn vị, lĩnh vực] */
+export type PersonRow = [string, number, number, number, string, string, string];
 export interface SharePayload {
   title: string;
-  room: SharedRoom;
+  rooms: SharedRoom[];
   people: PersonRow[];
 }
 export interface FoundPerson {
   /** Mã CC đã chuẩn hoá như lúc lưu (không phải chữ người dùng gõ). */
   code: string;
+  /** Ca, tính từ 1. */
+  session: number;
+  /** Vị trí phòng trong `rooms`. */
+  room: number;
   seat: number;
   name: string;
   unit: string;
+  field: string;
 }
 /** Bản ghi lưu trên máy chủ (khoá `phong:{ID}`). */
 export interface StoredRoom {
+  v: 2;
+  title: string;
+  rooms: SharedRoom[];
+  sessions: number;
+  /** Khoá là mã CC đã chuẩn hoá: [ca, phòng, số máy, họ tên, đơn vị, lĩnh vực]. */
+  people: Record<string, [number, number, number, string, string, string]>;
+  tokenHash: string;
+  expiresAt: number;
+}
+/** Bản ghi cũ: một phòng, một ca, chưa có lĩnh vực. */
+interface StoredRoomV1 {
   v: 1;
   title: string;
   room: SharedRoom;
-  /** Khoá là mã CC đã chuẩn hoá: [số máy, họ tên, đơn vị]. */
   people: Record<string, [number, string, string]>;
   tokenHash: string;
   expiresAt: number;
@@ -87,74 +103,99 @@ const isStr = (x: unknown, max: number, min = 0): x is string => typeof x === "s
 export type Validated = { ok: true; value: SharePayload } | { ok: false; error: string };
 const bad = (error: string): Validated => ({ ok: false, error });
 
-/** Kiểm tra chặt dữ liệu do máy khách gửi lên. */
+function validateRoom(room: unknown): SharedRoom | string {
+  if (!isObj(room)) return "Sơ đồ phòng không hợp lệ.";
+  const { name, blocks, rows, cols, style, start, off } = room;
+  if (!isStr(name, 200)) return "Tên phòng không hợp lệ.";
+  if (!isInt(blocks, 1, LIMITS.blocks) || !isInt(rows, 1, LIMITS.rows) || !isInt(cols, 1, LIMITS.cols))
+    return "Kích thước phòng vượt giới hạn.";
+  if (style !== "snake" && style !== "ltr") return "Kiểu đánh số không hợp lệ.";
+  if (!isInt(start, 0, 100_000)) return "Số máy bắt đầu không hợp lệ.";
+  if (!Array.isArray(off) || off.length > blocks * cols * rows) return "Danh sách máy bỏ không hợp lệ.";
+  for (const k of off) {
+    if (!isStr(k, 12, 3) || !/^\d+-\d+$/.test(k)) return "Danh sách máy bỏ không hợp lệ.";
+    const [r, c] = k.split("-").map(Number);
+    if (r >= rows || c >= blocks * cols) return "Danh sách máy bỏ không hợp lệ.";
+  }
+  return { name, blocks, rows, cols, style, start, off: [...(off as string[])] };
+}
+
+/** Kiểm tra chặt dữ liệu do máy khách gửi lên. Vẫn nhận dạng cũ một phòng `{ room, people: [mã, máy, tên, ĐV] }`. */
 export function validatePayload(input: unknown): Validated {
   if (!isObj(input)) return bad("Dữ liệu không hợp lệ.");
-  const { title, room, people } = input;
+  const { title, people } = input;
+  const legacy = !("rooms" in input) && "room" in input;
+  const rooms = legacy ? [input.room] : input.rooms;
   if (!isStr(title, 200)) return bad("Tên phòng thi không hợp lệ.");
-  if (!isObj(room)) return bad("Sơ đồ phòng không hợp lệ.");
-  const { name, blocks, rows, cols, style, start, off } = room;
-  if (!isStr(name, 200)) return bad("Tên phòng không hợp lệ.");
-  if (!isInt(blocks, 1, LIMITS.blocks) || !isInt(rows, 1, LIMITS.rows) || !isInt(cols, 1, LIMITS.cols))
-    return bad("Kích thước phòng vượt giới hạn.");
-  if (style !== "snake" && style !== "ltr") return bad("Kiểu đánh số không hợp lệ.");
-  if (!isInt(start, 0, 100_000)) return bad("Số máy bắt đầu không hợp lệ.");
-  if (!Array.isArray(off) || off.length > blocks * cols * rows) return bad("Danh sách máy bỏ không hợp lệ.");
-  for (const k of off) {
-    if (!isStr(k, 12, 3) || !/^\d+-\d+$/.test(k)) return bad("Danh sách máy bỏ không hợp lệ.");
-    const [r, c] = k.split("-").map(Number);
-    if (r >= rows || c >= blocks * cols) return bad("Danh sách máy bỏ không hợp lệ.");
+  if (!Array.isArray(rooms) || rooms.length === 0 || rooms.length > MAX_ROOMS) return bad("Danh sách phòng không hợp lệ.");
+  const roomsOut: SharedRoom[] = [];
+  for (const room of rooms) {
+    const r = validateRoom(room);
+    if (typeof r === "string") return bad(r);
+    roomsOut.push(r);
   }
   if (!Array.isArray(people) || people.length === 0) return bad("Danh sách người dự thi trống.");
   if (people.length > MAX_PEOPLE) return bad(`Tối đa ${MAX_PEOPLE} người dự thi.`);
   const seen = new Set<string>();
+  const taken = new Set<string>();
   const rowsOut: PersonRow[] = [];
   for (const p of people) {
-    if (!Array.isArray(p) || p.length !== 4) return bad("Dòng người dự thi không hợp lệ.");
-    const [code, seat, pname, unit] = p;
-    if (!isStr(code, 50, 1) || !isInt(seat, 0, 1_000_000) || !isStr(pname, 200) || !isStr(unit, 200))
+    const row: unknown = legacy && Array.isArray(p) && p.length === 4 ? [p[0], 1, 0, p[1], p[2], p[3], ""] : p;
+    if (!Array.isArray(row) || row.length !== 7) return bad("Dòng người dự thi không hợp lệ.");
+    const [code, session, room, seat, pname, unit, field] = row;
+    if (
+      !isStr(code, 50, 1) || !isInt(session, 1, MAX_SESSIONS) || !isInt(room, 0, roomsOut.length - 1) ||
+      !isInt(seat, 0, 1_000_000) || !isStr(pname, 200) || !isStr(unit, 200) || !isStr(field, 200)
+    )
       return bad("Dòng người dự thi không hợp lệ.");
     const key = normalizeCode(code);
     if (!key) return bad("Có mã CC bị trống.");
     if (seen.has(key)) return bad(`Mã CC bị trùng: ${key}.`);
     seen.add(key);
-    rowsOut.push([code, seat, pname, unit]);
+    const at = `${session}-${room}-${seat}`;
+    if (taken.has(at)) return bad(`Hai người cùng ngồi máy ${seat} (ca ${session}).`);
+    taken.add(at);
+    rowsOut.push([code, session, room, seat, pname, unit, field]);
   }
-  return {
-    ok: true,
-    value: {
-      title,
-      room: { name, blocks, rows, cols, style, start, off: [...(off as string[])] },
-      people: rowsOut,
-    },
-  };
+  return { ok: true, value: { title, rooms: roomsOut, people: rowsOut } };
 }
 
-/** Dựng dữ liệu chia sẻ từ kết quả xếp chỗ (items[i] = chỉ số người ở ghế i, hoặc -1). */
+const toShared = (r: RoomConfig): SharedRoom => ({
+  name: r.name, blocks: r.blocks, rows: r.rows, cols: r.cols, style: r.style, start: r.start, off: [...r.off],
+});
+
+/** Dựng dữ liệu chia sẻ từ kết quả xếp chỗ: items[ca][phòng][ghế] = chỉ số người, hoặc -1. */
 export function buildSharePayload(
-  room: RoomConfig,
-  seats: Seat[],
-  items: number[],
+  rooms: RoomConfig[],
+  seatsOf: Seat[][],
+  items: number[][][],
   people: Person[],
   units: Unit[],
 ): SharePayload {
-  return {
-    title: room.name,
-    room: { name: room.name, blocks: room.blocks, rows: room.rows, cols: room.cols, style: room.style, start: room.start, off: [...room.off] },
-    people: seats.flatMap((s, i) => {
-      const p = items[i] >= 0 ? people[items[i]] : null;
-      return p ? [[p.code, s.number, p.name, units[p.unitId].name] as PersonRow] : [];
-    }),
-  };
+  const rows: PersonRow[] = [];
+  items.forEach((row, s) =>
+    row.forEach((its, r) =>
+      seatsOf[r].forEach((seat, i) => {
+        const p = its[i] >= 0 ? people[its[i]] : null;
+        if (p) rows.push([p.code, s + 1, r, seat.number, p.name, units[p.unitId].name, p.field]);
+      }),
+    ),
+  );
+  return { title: rooms.map((r) => r.name).join(", ").slice(0, 200), rooms: rooms.map(toShared), people: rows };
 }
 
 export function toStored(payload: SharePayload, tokenHash: string, now = Date.now()): StoredRoom {
   const people: StoredRoom["people"] = {};
-  for (const [code, seat, name, unit] of payload.people) people[normalizeCode(code)] = [seat, name, unit];
+  let sessions = 1;
+  for (const [code, session, room, seat, name, unit, field] of payload.people) {
+    people[normalizeCode(code)] = [session, room, seat, name, unit, field];
+    sessions = Math.max(sessions, session);
+  }
   return {
-    v: 1,
+    v: 2,
     title: payload.title,
-    room: payload.room,
+    rooms: payload.rooms,
+    sessions,
     people,
     tokenHash,
     expiresAt: now + ROOM_TTL_SECONDS * 1000,
@@ -173,14 +214,22 @@ export function findPerson(people: StoredRoom["people"], input: string): FoundPe
     if (bare) key = Object.keys(people).find((k) => stripCC(k) === bare);
   }
   const hit = key ? people[key] : undefined;
-  return key && hit ? { code: key, seat: hit[0], name: hit[1], unit: hit[2] } : null;
+  if (!key || !hit) return null;
+  const [session, room, seat, name, unit, field] = hit;
+  return { code: key, session, room, seat, name, unit, field };
 }
 
+/** Đọc bản ghi đã lưu; bản v1 (một phòng) được đổi sang v2 với ca 1, phòng đầu tiên. */
 export function parseStored(raw: string | null): StoredRoom | null {
   if (!raw) return null;
   try {
-    const d = JSON.parse(raw) as StoredRoom;
-    return d && d.v === 1 && isObj(d.people) && isObj(d.room) ? d : null;
+    const d = JSON.parse(raw) as StoredRoom | StoredRoomV1;
+    if (!d || !isObj(d.people)) return null;
+    if (d.v === 2) return Array.isArray(d.rooms) && d.rooms.length > 0 ? d : null;
+    if (d.v !== 1 || !isObj(d.room)) return null;
+    const people: StoredRoom["people"] = {};
+    for (const [k, [seat, name, unit]] of Object.entries(d.people)) people[k] = [1, 0, seat, name, unit, ""];
+    return { v: 2, title: d.title, rooms: [d.room], sessions: 1, people, tokenHash: d.tokenHash, expiresAt: d.expiresAt };
   } catch {
     return null;
   }

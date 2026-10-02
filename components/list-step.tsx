@@ -6,17 +6,20 @@ import { Card, CheckIcon, DownloadIcon, Notice, Pill } from "./ui/card";
 import { analyzeRows, parseDelimited, type Analysis, type RawRow } from "@/lib/people";
 import { downloadBlob, readXlsx, templateXlsx } from "@/lib/excel";
 import { unitColor } from "@/lib/colors";
+import { MAX_SESSIONS, minSessions } from "@/lib/sessions";
 
 export interface ListState { analysis: Analysis; source: string }
 
-const HEADER: RawRow = { line: 0, cells: ["Họ tên", "Mã CC", "Đơn vị"] };
+const HEADER: RawRow = { line: 0, cells: ["Họ tên", "Mã CC", "Đơn vị", "Lĩnh vực dự kiểm tra"] };
 
 export function ListStep({
-  list, setList, seatCount, canNext, onBack, onNext,
+  list, setList, capacity, roomCount, canNext, onBack, onNext,
 }: {
   list: ListState | null;
   setList: (l: ListState | null) => void;
-  seatCount: number;
+  /** Tổng số chỗ xếp người của mọi phòng trong một ca (đã trừ máy dự phòng). */
+  capacity: number;
+  roomCount: number;
   canNext: boolean;
   onBack: () => void;
   onNext: () => void;
@@ -51,14 +54,16 @@ export function ListStep({
 
   function dropBadRows() {
     if (!list) return;
-    const good = list.analysis.entries.filter((e) => !e.problem).map((e) => ({ line: e.line, cells: [e.name, e.code, e.unit] }));
+    const good = list.analysis.entries.filter((e) => !e.problem).map((e) => ({ line: e.line, cells: [e.name, e.code, e.unit, e.field] }));
     setList({ ...list, analysis: analyzeRows([HEADER, ...good]) });
   }
 
   const a = list?.analysis;
   const problems = a ? a.missing.length + a.duplicates.length : 0;
-  const tooMany = !!a && a.people.length > seatCount;
+  const sessions = a ? minSessions(a.people.length, [capacity]) : 1;
   const empty = !!a && a.people.length === 0 && problems === 0;
+  const noField = a?.hasField ? a.people.filter((p) => !p.field) : [];
+  const where = roomCount > 1 ? `${roomCount} phòng có tổng ${capacity} chỗ` : `phòng có ${capacity} chỗ`;
 
   return (
     <>
@@ -107,7 +112,7 @@ export function ListStep({
                 value={paste}
                 onChange={(e) => setPaste(e.target.value)}
                 rows={5}
-                placeholder={"Nguyễn Văn A\tCC0001\tSở Nội vụ"}
+                placeholder={"Nguyễn Văn A\tCC0001\tSở Nội vụ\tKế toán"}
                 className="field p-3 text-sm"
               />
               <Button onClick={readPaste}>Đọc danh sách</Button>
@@ -128,7 +133,7 @@ export function ListStep({
           )}
           <hr className="border-line" />
           <p className="text-sm leading-relaxed text-muted">
-            Chưa có file? Tải file mẫu 3 cột <b className="font-semibold text-ink">Họ tên, Mã CC, Đơn vị</b>, điền rồi tải lên.
+            Chưa có file? Tải file mẫu 4 cột <b className="font-semibold text-ink">Họ tên, Mã CC, Đơn vị, Lĩnh vực dự kiểm tra</b>, điền rồi tải lên.
           </p>
           <Button onClick={async () => downloadBlob(await templateXlsx(), "mau-danh-sach.xlsx")}>
             <DownloadIcon /> Tải file mẫu (.xlsx)
@@ -170,10 +175,25 @@ export function ListStep({
                   Đã gộp {a.merged.map((u) => u.variants.map((v) => `"${v}"`).join(" và ")).join("; ")} thành 1 đơn vị.
                 </Notice>
               )}
-              {tooMany && (
-                <Notice tone="danger">
-                  Có {a.people.length} người nhưng phòng chỉ có {seatCount} máy. Quay lại bước 1 để thêm máy.
+              {noField.length > 0 && (
+                <Notice tone="warn">
+                  {noField.length} người chưa có lĩnh vực dự kiểm tra (dòng {noField.slice(0, 6).map((p) => p.line).join(", ")}
+                  {noField.length > 6 ? "…" : ""}). Vẫn xếp được, chỉ là chỗ lĩnh vực sẽ để trống.
                 </Notice>
+              )}
+              {capacity === 0 ? (
+                <Notice tone="danger">Các phòng không còn chỗ nào sau khi trừ máy dự phòng. Quay lại bước 1 để sửa.</Notice>
+              ) : sessions > MAX_SESSIONS ? (
+                <Notice tone="danger">
+                  Có {a.people.length} người, {where} mỗi ca, phải chia tới {sessions} ca. Quay lại bước 1 để thêm phòng hoặc thêm máy.
+                </Notice>
+              ) : (
+                sessions > 1 && (
+                  <Notice tone="info">
+                    Có {a.people.length} người, {where} mỗi ca (đã trừ máy dự phòng), nên sẽ chia thành{" "}
+                    <b className="font-semibold">{sessions} ca</b>. Mỗi ĐV được rải đều qua các ca và các phòng.
+                  </Notice>
+                )
               )}
               <div role="tablist" aria-label="Cách xem" className="flex gap-6 border-b border-line">
                 {([["list", "Danh sách", a.people.length], ["unit", "Theo đơn vị", a.units.length]] as const).map(([k, label, n]) => (
@@ -198,6 +218,7 @@ export function ListStep({
                         <th className="px-3 font-medium">Họ tên</th>
                         <th className="w-32 px-3 font-medium">Mã CC</th>
                         <th className="px-3 font-medium">Đơn vị</th>
+                        {a.hasField && <th className="px-3 font-medium">Lĩnh vực</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -212,6 +233,7 @@ export function ListStep({
                               {a.units[p.unitId].name}
                             </span>
                           </td>
+                          {a.hasField && <td className="px-3">{p.field || <span className="text-faint">Chưa có</span>}</td>}
                         </tr>
                       ))}
                     </tbody>

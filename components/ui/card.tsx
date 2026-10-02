@@ -14,8 +14,8 @@ export function Pill({ tone = "neutral", children }: { tone?: "neutral" | "ok" |
 }
 
 /** Hộp báo lỗi / cảnh báo nằm trong card. */
-export function Notice({ tone, className = "", children }: { tone: "warn" | "danger"; className?: string; children: React.ReactNode }) {
-  const t = tone === "warn" ? "bg-warn-bg text-warn" : "bg-danger-bg text-danger";
+export function Notice({ tone, className = "", children }: { tone: "info" | "warn" | "danger"; className?: string; children: React.ReactNode }) {
+  const t = { info: "bg-brand-soft text-brand-ink", warn: "bg-warn-bg text-warn", danger: "bg-danger-bg text-danger" }[tone];
   return <div className={`rounded-control px-4 py-2.5 text-sm ${t} ${className}`}>{children}</div>;
 }
 

@@ -2,67 +2,119 @@
 
 import { useMemo, useRef, useState } from "react";
 import { AppHeader, type Step } from "./app-header";
-import { RoomStep, type Draft } from "./room-step";
+import { RoomStep, newEntry, type RoomEntry } from "./room-step";
 import { ListStep, type ListState } from "./list-step";
-import { ResultStep, type ResultState } from "./result-step";
-import { buildSeats } from "@/lib/room";
-import type { Adjacency, RoomConfig, SpareMode } from "@/lib/types";
-import type { ArrangeRequest } from "@/lib/arrange.worker";
+import { ResultStep, type Plan } from "./result-step";
+import { buildNeighbors, buildSeats } from "@/lib/room";
+import { evaluate } from "@/lib/seating";
+import { MAX_SESSIONS, capacityOf, distribute, minSessions, planCounts, swapSeats } from "@/lib/sessions";
+import type { Adjacency, SeatRef, SpareMode } from "@/lib/types";
+import type { ArrangeMessage, ArrangeRequest } from "@/lib/arrange.worker";
 
 export default function Wizard() {
   const [step, setStep] = useState<Step>(1);
-  const [draft, setDraft] = useState<Draft>({ blocks: null, rows: null, cols: null, style: "snake", start: 1 });
-  const [room, setRoomState] = useState<RoomConfig | null>(null);
+  const [entries, setEntries] = useState<RoomEntry[]>(() => [newEntry()]);
+  const [active, setActive] = useState(0);
   const [list, setListState] = useState<ListState | null>(null);
   const [adj, setAdj] = useState<Adjacency>("lr");
   const [spare, setSpare] = useState<SpareMode>("tail");
-  const [result, setResult] = useState<ResultState | null>(null);
-  const [running, setRunning] = useState(false);
+  /** Số ca người dùng chọn; null = ít nhất có thể. */
+  const [sessionsPick, setSessionsPick] = useState<number | null>(null);
+  const [result, setResult] = useState<Plan | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const workerRef = useRef<Worker | null>(null);
+  const running = progress !== null;
 
-  const seats = useMemo(() => (room ? buildSeats(room) : []), [room]);
-  const people = list?.analysis.people ?? [];
+  const rooms = useMemo(() => entries.flatMap((e) => (e.room ? [e.room] : [])), [entries]);
+  const seatsOf = useMemo(() => rooms.map((r) => buildSeats(r)), [rooms]);
+  const nbOf = useMemo(() => rooms.map((r, k) => buildNeighbors(r, seatsOf[k], adj)), [rooms, seatsOf, adj]);
+  const capacities = rooms.map((r, k) => capacityOf(seatsOf[k].length, r.reserve));
+  const people = useMemo(() => list?.analysis.people ?? [], [list]);
+  const unitOf = useMemo(() => people.map((p) => p.unitId), [people]);
   const listOk = !!list && people.length > 0 && !list.analysis.missing.length && !list.analysis.duplicates.length;
+  const minS = minSessions(people.length, capacities);
+  const sessions = Math.max(minS, sessionsPick ?? 0);
+  const canArrange = rooms.length > 0 && listOk && minS <= MAX_SESSIONS;
 
   // Mọi thay đổi đầu vào đều làm kết quả cũ hết hiệu lực.
-  const setRoom = (r: RoomConfig | null) => { setRoomState(r); setResult(null); };
-  const setList = (l: ListState | null) => { setListState(l); setResult(null); };
-
-  const canGo = (s: Step) => s === 1 || (s === 2 && !!room) || (s === 3 && !!room && listOk && people.length <= seats.length);
-
-  function run(nextAdj = adj, nextSpare = spare) {
-    if (!room || !list) return;
+  function reset() {
     workerRef.current?.terminate();
+    setProgress(null);
+    setResult(null);
+    setSessionsPick(null);
+  }
+  const setList = (l: ListState | null) => { setListState(l); reset(); };
+  function updateEntry(patch: Partial<Omit<RoomEntry, "key">>) {
+    setEntries((es) => es.map((e, i) => (i === active ? { ...e, ...patch } : e)));
+    if ("room" in patch) reset();
+  }
+  function addEntry() {
+    setEntries((es) => [...es, newEntry()]);
+    setActive(entries.length);
+  }
+  function removeEntry(i: number) {
+    const hadRoom = !!entries[i].room;
+    setEntries((es) => es.filter((_, k) => k !== i));
+    setActive((a) => (a > i ? a - 1 : Math.min(a, entries.length - 2)));
+    if (hadRoom) reset();
+  }
+
+  const canGo = (s: Step) => s === 1 || (s === 2 && rooms.length > 0) || (s === 3 && canArrange);
+
+  /** keep: giữ nguyên ai ở ca nào, phòng nào (kể cả người đã chuyển tay), chỉ xếp lại ghế trong từng phòng. */
+  function run({ nextAdj = adj, nextSpare = spare, nextSessions = sessions, keep = true } = {}) {
+    if (!canArrange) return;
+    workerRef.current?.terminate();
+    const groups =
+      keep && result && result.slots.length === nextSessions
+        ? result.slots.map((row) => row.map((x) => x.items.filter((p) => p >= 0)))
+        : distribute(unitOf, planCounts(people.length, capacities, nextSessions));
     const worker = new Worker(new URL("../lib/arrange.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = worker;
-    setRunning(true);
-    worker.onmessage = (e) => {
+    setProgress({ done: 0, total: groups.length * rooms.length });
+    worker.onmessage = (e: MessageEvent<ArrangeMessage>) => {
       const d = e.data;
+      if (d.type === "progress") return setProgress({ done: d.done, total: d.total });
       setResult({
-        items: d.items,
-        conflictPairs: d.conflictPairs,
-        conflictSeats: new Set(d.conflictSeats),
-        capacityIssues: d.capacityIssues,
+        slots: d.slots.map((row) => row.map((x) => ({ ...x, conflictSeats: new Set(x.conflictSeats) }))),
+        edited: false,
       });
-      setRunning(false);
+      setProgress(null);
       worker.terminate();
     };
-    worker.onerror = () => { setRunning(false); worker.terminate(); };
-    const req: ArrangeRequest = { room, unitOfPerson: list.analysis.people.map((p) => p.unitId), adj: nextAdj, spare: nextSpare };
+    worker.onerror = () => { setProgress(null); worker.terminate(); };
+    const req: ArrangeRequest = { rooms, unitOf, groups, adj: nextAdj, spare: nextSpare };
     worker.postMessage(req);
+  }
+
+  /** Hỏi trước khi bỏ các chỗ đã đổi tay. */
+  const keepEdits = (message: string) => !!result?.edited && !confirm(message);
+  const RESEAT = "Xếp lại sẽ đổi chỗ ngồi trong từng phòng, kể cả chỗ bạn đã đổi tay (ai vẫn ở đúng ca, đúng phòng đó). Tiếp tục?";
+
+  function move(a: SeatRef, b: SeatRef) {
+    if (!result || running) return;
+    const items = swapSeats(result.slots.map((row) => row.map((x) => x.items)), a, b);
+    setResult({
+      edited: true,
+      slots: result.slots.map((row, s) =>
+        row.map((slot, r) => (items[s][r] === slot.items ? slot : { ...slot, items: items[s][r], ...evaluate(items[s][r], nbOf[r], unitOf) })),
+      ),
+    });
   }
 
   function go(s: Step) {
     if (!canGo(s)) return;
     setStep(s);
-    if (s === 3 && !result && !running) run();
+    if (s === 3 && !result && !running) run({ keep: false });
     window.scrollTo({ top: 0 });
   }
 
+  const totalSeats = seatsOf.reduce((n, x) => n + x.length, 0);
+  const conflicts = result ? result.slots.flat().reduce((n, x) => n + x.conflictPairs, 0) : 0;
   const statuses: [string, string, string] = [
-    room ? `${seats.length} máy` : "Chưa có",
+    rooms.length > 1 ? `${rooms.length} phòng · ${totalSeats} máy` : rooms.length ? `${totalSeats} máy` : "Chưa có",
     listOk ? `${people.length} người` : list ? "Cần sửa" : "Chưa có",
-    running ? "Đang xếp…" : result ? (result.conflictPairs ? "Còn chỗ trùng" : "Đã xếp") : "Chưa xếp",
+    running ? "Đang xếp…" : result ? (conflicts ? "Còn chỗ trùng" : result.slots.length > 1 ? `Đã xếp ${result.slots.length} ca` : "Đã xếp") : "Chưa xếp",
   ];
 
   return (
@@ -70,24 +122,49 @@ export default function Wizard() {
       <AppHeader step={step} statuses={statuses} canGo={canGo} onGo={go} />
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-10 pt-8 pb-10">
         {step === 1 && (
-          <RoomStep draft={draft} setDraft={setDraft} room={room} setRoom={setRoom} seats={seats} onNext={() => go(2)} />
+          <RoomStep
+            entries={entries}
+            active={active}
+            onSelect={setActive}
+            onAdd={addEntry}
+            onRemove={removeEntry}
+            onChange={updateEntry}
+            onNext={() => go(2)}
+          />
         )}
         {step === 2 && (
-          <ListStep list={list} setList={setList} seatCount={seats.length} canNext={canGo(3)} onBack={() => go(1)} onNext={() => go(3)} />
+          <ListStep
+            list={list}
+            setList={setList}
+            capacity={capacities.reduce((n, c) => n + c, 0)}
+            roomCount={rooms.length}
+            canNext={canGo(3)}
+            onBack={() => go(1)}
+            onNext={() => go(3)}
+          />
         )}
-        {step === 3 && room && list && (
+        {step === 3 && rooms.length > 0 && list && (
           <ResultStep
-            room={room}
-            seats={seats}
+            rooms={rooms}
+            seatsOf={seatsOf}
+            nbOf={nbOf}
             people={people}
             units={list.analysis.units}
             result={result}
-            running={running}
+            progress={progress}
             adj={adj}
             spare={spare}
-            onAdj={(a) => { setAdj(a); run(a, spare); }}
-            onSpare={(s) => { setSpare(s); run(adj, s); }}
-            onRerun={() => run()}
+            sessions={sessions}
+            minSessions={minS}
+            onAdj={(a) => { if (keepEdits(RESEAT)) return; setAdj(a); run({ nextAdj: a }); }}
+            onSpare={(s) => { if (keepEdits(RESEAT)) return; setSpare(s); run({ nextSpare: s }); }}
+            onSessions={(n) => {
+              if (keepEdits("Đổi số ca sẽ chia lại người vào các ca và các phòng; những chỗ bạn đã đổi tay sẽ mất. Tiếp tục?")) return;
+              setSessionsPick(n);
+              run({ nextSessions: n, keep: false });
+            }}
+            onRerun={() => { if (!keepEdits(RESEAT)) run(); }}
+            onMove={move}
             onBack={() => go(2)}
           />
         )}

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
-import { readXlsx, templateXlsx } from "./excel";
+import { readXlsx, resultXlsx, templateXlsx } from "./excel";
 import { analyzeRows } from "./people";
+import { buildSeats, newRoom } from "./room";
+import type { Person } from "./types";
 
 describe("file mẫu (.xlsx)", () => {
   it("file mẫu chưa điền gì -> đọc ra 0 người, không lỗi, không trùng", async () => {
@@ -25,6 +27,7 @@ describe("file mẫu (.xlsx)", () => {
     ws.getCell(2, 1).value = "Phạm Văn D";
     ws.getCell(2, 2).value = "001234";
     ws.getCell(2, 3).value = "Sở Y tế";
+    ws.getCell(2, 4).value = "Kế toán";
     ws.getCell(3, 1).value = "Trần Thị E";
     ws.getCell(3, 2).value = "CC0002";
     ws.getCell(3, 3).value = "sở y tế";
@@ -38,7 +41,8 @@ describe("file mẫu (.xlsx)", () => {
     const a = analyzeRows(rows);
 
     expect(a.people).toHaveLength(3);
-    expect(a.people.find((p) => p.name === "Phạm Văn D")?.code).toBe("001234");
+    expect(a.people.find((p) => p.name === "Phạm Văn D")).toMatchObject({ code: "001234", field: "Kế toán" });
+    expect(a.people.find((p) => p.name === "Lê Văn F")?.field).toBe("");
     expect(a.units).toHaveLength(2);
     const merged = a.units.find((u) => u.variants.length > 1);
     expect(merged?.variants.slice().sort()).toEqual(["Sở Y tế", "sở y tế"]);
@@ -46,23 +50,67 @@ describe("file mẫu (.xlsx)", () => {
     expect(a.people.some((p) => p.name === "Nguyễn Văn A")).toBe(false);
   });
 
-  it("tiêu đề chỉ tô ở A1:C1, cột Mã CC ở các dòng dữ liệu là định dạng văn bản", async () => {
+  it("tiêu đề chỉ tô ở A1:D1, cột Mã CC ở các dòng dữ liệu là định dạng văn bản", async () => {
     const blob = await templateXlsx();
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(await blob.arrayBuffer());
     const ws = wb.getWorksheet("Danh sách");
     if (!ws) throw new Error("thiếu trang Danh sách");
 
-    for (const col of [1, 2, 3]) {
+    for (const col of [1, 2, 3, 4]) {
       const cell = ws.getRow(1).getCell(col);
       expect(cell.fill).toBeTruthy();
       expect(cell.font?.bold).toBe(true);
     }
-    const d1 = ws.getRow(1).getCell(4);
-    expect(d1.fill).toBeFalsy();
+    expect(ws.getRow(1).getCell(4).value).toBe("Lĩnh vực dự kiểm tra");
+    const e1 = ws.getRow(1).getCell(5);
+    expect(e1.fill).toBeFalsy();
 
     for (const r of [2, 50, 301]) {
       expect(ws.getRow(r).getCell(2).numFmt).toBe("@");
     }
+  });
+});
+
+describe("file kết quả (.xlsx)", () => {
+  const people: Person[] = [
+    { line: 2, name: "An", code: "CC1", unit: "Sở A", field: "Kế toán", unitId: 0 },
+    { line: 3, name: "Bình", code: "CC2", unit: "Sở B", field: "Thuế", unitId: 1 },
+    { line: 4, name: "Chi", code: "CC3", unit: "Sở A", field: "", unitId: 0 },
+  ];
+
+  async function open(blob: Blob) {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await blob.arrayBuffer());
+    return wb;
+  }
+
+  it("mỗi phòng mỗi ca một trang sơ đồ, ô ghi cả Mã CC và lĩnh vực; trang Danh sách có Ca, Phòng, Lĩnh vực", async () => {
+    const rooms = [
+      newRoom({ id: "a", name: "Phòng 1", blocks: 1, rows: 1, cols: 2 }),
+      newRoom({ id: "b", name: "Phòng 2", blocks: 1, rows: 1, cols: 2 }),
+    ];
+    const seatsOf = rooms.map((r) => buildSeats(r));
+    const wb = await open(await resultXlsx(rooms, seatsOf, [[[0, -1], [1, -1]], [[-1, 2], [-1, -1]]], people));
+    expect(wb.worksheets.map((w) => w.name)).toEqual([
+      "Ca 1 · Phòng 1", "Ca 1 · Phòng 2", "Ca 2 · Phòng 1", "Ca 2 · Phòng 2", "Danh sách",
+    ]);
+    const map = wb.getWorksheet("Ca 1 · Phòng 1")!;
+    expect(String(map.getCell(1, 1).value)).toContain("Ca 1 · Phòng 1");
+    const seat = map.getCell(3, 1).value as { richText: { text: string }[] };
+    expect(seat.richText.map((t) => t.text).join("")).toBe("1\nAn\nCC1\nSở A\nKế toán");
+
+    const list = wb.getWorksheet("Danh sách")!;
+    expect(list.getRow(1).values).toEqual([undefined, "Ca", "Phòng", "Số máy", "Khoang", "Hàng", "Ghế", "Họ tên", "Mã CC", "Đơn vị", "Lĩnh vực dự kiểm tra"]);
+    expect(list.rowCount).toBe(1 + 2 * 2 * 2);
+    expect(list.getRow(2).values).toEqual([undefined, 1, "Phòng 1", 1, 1, 1, 1, "An", "CC1", "Sở A", "Kế toán"]);
+  });
+
+  it("một phòng, một ca, không có lĩnh vực: giữ trang Sơ đồ và bỏ các cột thừa", async () => {
+    const room = newRoom({ id: "a", name: "P", blocks: 1, rows: 1, cols: 3 });
+    const plain = people.map((p) => ({ ...p, field: "" }));
+    const wb = await open(await resultXlsx([room], [buildSeats(room)], [[[0, 1, 2]]], plain));
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["Sơ đồ", "Danh sách"]);
+    expect(wb.getWorksheet("Danh sách")!.getRow(1).values).toEqual([undefined, "Số máy", "Khoang", "Hàng", "Ghế", "Họ tên", "Mã CC", "Đơn vị"]);
   });
 });

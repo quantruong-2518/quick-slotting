@@ -92,6 +92,36 @@ describe("đọc danh sách", () => {
     expect(a.people[3].unit).toBe("Cơ quan Thường trực");
   });
 
+  it("cột Lĩnh vực dự kiểm tra sau cột Đơn vị", () => {
+    const text = "Họ tên\tMã CC\tĐơn vị\tLĩnh vực dự kiểm tra\nA\tCC1\tSở Y tế\tKế toán\nB\tCC2\tSở Nội vụ\t";
+    const a = analyzeRows(parseDelimited(text));
+    expect(a.hasField).toBe(true);
+    expect(a.people.map((p) => p.field)).toEqual(["Kế toán", ""]);
+    // Lĩnh vực trống không phải lỗi.
+    expect(a.missing).toHaveLength(0);
+    expect(a.columnNote).toContain('Lĩnh vực: "Lĩnh vực dự kiểm tra"');
+  });
+
+  it("cột Lĩnh vực đứng trước Đơn vị vẫn nhận đúng, không lẫn với Đơn vị", () => {
+    const text = "STT\tHọ và tên\tMã CC\tLĩnh vực\tĐơn vị công tác\n1\tA\tCC1\tThuế\tSở Tài chính";
+    const a = analyzeRows(parseDelimited(text));
+    expect(a.people[0]).toMatchObject({ name: "A", code: "CC1", unit: "Sở Tài chính", field: "Thuế" });
+  });
+
+  it("không có cột Lĩnh vực thì để trống", () => {
+    const a = analyzeRows(parseDelimited("Họ tên\tMã CC\tĐơn vị\nA\tCC1\tSở Y tế"));
+    expect(a.hasField).toBe(false);
+    expect(a.people[0].field).toBe("");
+    expect(a.columnNote).not.toContain("Lĩnh vực");
+  });
+
+  it("dán không có tiêu đề: cột thứ 4 là lĩnh vực như file mẫu", () => {
+    const a = analyzeRows(parseDelimited("A\tCC1\tSở Y tế\tKế toán\nB\tCC2\tSở Nội vụ\tThuế"));
+    expect(a.people.map((p) => p.field)).toEqual(["Kế toán", "Thuế"]);
+    expect(a.hasField).toBe(true);
+    expect(analyzeRows(parseDelimited("A\tCC1\tSở Y tế")).hasField).toBe(false);
+  });
+
   it("tiêu đề dạng STT | Họ và tên | Mã công chức | Đơn vị công tác vẫn nhận đúng cột", () => {
     const text = "STT\tHọ và tên\tMã công chức\tĐơn vị công tác\n1\tNguyễn Văn A\tCC0001\tSở Nội vụ";
     const a = analyzeRows(parseDelimited(text));

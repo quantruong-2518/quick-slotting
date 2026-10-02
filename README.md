@@ -5,15 +5,15 @@ Người dự thi tra chỗ ngồi của mình trên điện thoại bằng mã 
 
 ## Chức năng
 
-1. **Sơ đồ phòng**: nhập số khoang, số hàng, số cột mỗi khoang; bấm vào ô để bỏ/thêm máy; đánh số kiểu rắn hoặc thẳng; lưu và mở lại sơ đồ (lưu trong trình duyệt).
-2. **Danh sách**: kéo thả hoặc chọn file `.xlsx`/`.csv`, hoặc dán từ Excel; tải file mẫu; tự nhận cột, báo dòng thiếu và mã trùng, gộp tên đơn vị viết khác nhau.
-3. **Xếp chỗ**: chọn cách tính "ngồi cạnh" (trái-phải / thêm trước-sau / thêm chéo), xếp lại ngẫu nhiên, xem chi tiết từng khoang, tải Excel (sơ đồ tô màu + danh sách theo số máy), chia sẻ phòng thi (mã phòng, link và mã QR).
-4. **Tra cứu**: bấm "Chia sẻ phòng thi" ở bước 3 để có mã phòng (ví dụ `K7M2QX`), link `/tra-cuu/K7M2QX` và mã QR. Người dự thi quét mã hoặc mở link, nhập Mã CC để xem khoang, hàng, ghế và vị trí trên sơ đồ (màn điện thoại). Vào `/tra-cuu` không kèm mã thì nhập cả Mã phòng và Mã CC. Link dùng được 30 ngày; xếp lại rồi bấm "Cập nhật" thì mã cũ vẫn dùng được.
+1. **Sơ đồ phòng**: thêm một hay nhiều phòng; mỗi phòng nhập số khoang, số hàng, số cột mỗi khoang; bấm vào ô để bỏ/thêm máy; đánh số kiểu rắn hoặc thẳng; đặt số **máy dự phòng** (mỗi ca luôn để trống); lưu và mở lại sơ đồ (lưu trong trình duyệt).
+2. **Danh sách**: kéo thả hoặc chọn file `.xlsx`/`.csv`, hoặc dán từ Excel; tải file mẫu 4 cột (Họ tên, Mã CC, Đơn vị, Lĩnh vực dự kiểm tra; lĩnh vực có thể để trống); tự nhận cột, báo dòng thiếu và mã trùng, gộp tên đơn vị viết khác nhau. Đông hơn số chỗ thì báo cần mấy ca.
+3. **Xếp chỗ**: tự chia người vào các ca và các phòng (các ca đông gần bằng nhau, mỗi đơn vị rải đều), rồi xếp chỗ trong từng phòng; có thể tăng số ca. Bảng tổng Ca × Phòng cho biết mỗi ô bao nhiêu người, còn cặp nào cùng đơn vị ngồi cạnh không. Chọn cách tính "ngồi cạnh" (trái-phải / thêm trước-sau / thêm chéo), xếp lại ngẫu nhiên, xem chi tiết từng khoang (họ tên, Mã CC, đơn vị, lĩnh vực), tìm người theo tên hoặc Mã CC, **đổi chỗ** một người sang phòng khác, ca khác (máy có người thì hai người đổi cho nhau). Tải Excel (mỗi phòng mỗi ca một trang sơ đồ tô màu + danh sách), chia sẻ (mã phòng, link và mã QR).
+4. **Tra cứu**: bấm "Chia sẻ phòng thi" ở bước 3 để có mã phòng (ví dụ `K7M2QX`) dùng chung cho mọi phòng, mọi ca, link `/tra-cuu/K7M2QX` và mã QR. Người dự thi quét mã hoặc mở link, nhập Mã CC để xem ca, phòng, số máy, khoang, hàng, ghế, lĩnh vực và vị trí trên sơ đồ (màn điện thoại). Vào `/tra-cuu` không kèm mã thì nhập cả Mã phòng và Mã CC. Link dùng được 30 ngày; xếp lại rồi bấm "Cập nhật" thì mã cũ vẫn dùng được.
 
 ## Quyền riêng tư
 
 Danh sách chỉ xử lý trong trình duyệt cho tới khi bạn bấm **Chia sẻ phòng thi**. Lúc đó tên, mã CC,
-đơn vị và số máy được lưu trên kho Upstash Redis trong **30 ngày** rồi tự xoá. Người dự thi chỉ tra được
+đơn vị, lĩnh vực, ca, phòng và số máy được lưu trên kho Upstash Redis trong **30 ngày** rồi tự xoá. Người dự thi chỉ tra được
 từng người một khi biết mã phòng và Mã CC; máy chủ không bao giờ trả cả danh sách, và có giới hạn
 30 lần tra cứu mỗi phút. Trang tra cứu gắn `noindex`. Chỉ gửi mã phòng cho đúng người dự thi.
 

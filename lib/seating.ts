@@ -68,6 +68,8 @@ interface ArrangeInput {
   exactPathBound?: boolean;
   rng?: Rng;
   timeBudgetMs?: number;
+  /** Trần thời gian, dùng khi xếp nhiều phòng liền nhau trong một lần. */
+  maxTimeMs?: number;
   now?: () => number;
 }
 
@@ -91,7 +93,8 @@ export function arrange(input: ArrangeInput): ArrangeResult {
   const capacityIssues: ArrangeResult["capacityIssues"] = [];
   if (bound !== null) counts.forEach((c, u) => { if (c > bound) capacityIssues.push({ unitId: u, count: c, max: bound }); });
 
-  const deadline = now() + (input.timeBudgetMs ?? (capacityIssues.length ? 1200 : 4000));
+  const budget = Math.min(input.timeBudgetMs ?? (capacityIssues.length ? 1200 : 4000), input.maxTimeMs ?? Infinity);
+  const deadline = now() + budget;
   let best: number[] | null = null;
   let bestTotal = Infinity;
 
@@ -108,20 +111,25 @@ export function arrange(input: ArrangeInput): ArrangeResult {
   }
 
   const items = best!;
+  return { items, ...evaluate(items, nb, unitOfPerson), capacityIssues };
+}
+
+/** Đếm cặp cùng đơn vị ngồi kề và các ghế dính vào (items[i] = chỉ số người hoặc -1). */
+export function evaluate(items: number[], nb: number[][], unitOf: number[]) {
   const conflictSeats = new Set<number>();
-  let pairs = 0;
-  for (let k = 0; k < s; k++) {
+  let conflictPairs = 0;
+  for (let k = 0; k < items.length; k++) {
     if (items[k] < 0) continue;
-    const uk = unitOfPerson[items[k]];
+    const uk = unitOf[items[k]];
     for (const j of nb[k]) {
-      if (j > k && items[j] >= 0 && unitOfPerson[items[j]] === uk) {
-        pairs++;
+      if (j > k && items[j] >= 0 && unitOf[items[j]] === uk) {
+        conflictPairs++;
         conflictSeats.add(k);
         conflictSeats.add(j);
       }
     }
   }
-  return { items, conflictPairs: pairs, conflictSeats, capacityIssues };
+  return { conflictPairs, conflictSeats };
 }
 
 function localSearch(

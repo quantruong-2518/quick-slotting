@@ -20,7 +20,10 @@ function readAll(): Record<string, SavedShare> {
   }
 }
 
-export const loadShare = (roomId: string): SavedShare | null => readAll()[roomId] ?? null;
+/** Khoá lưu mã chia sẻ cho một bộ phòng: cùng các phòng thì giữ mã cũ. Một phòng thì khoá là id phòng như trước. */
+export const shareKey = (roomIds: string[]) => [...roomIds].sort().join("+");
+
+export const loadShare = (key: string): SavedShare | null => readAll()[key] ?? null;
 
 function saveShare(roomId: string, s: SavedShare) {
   try {

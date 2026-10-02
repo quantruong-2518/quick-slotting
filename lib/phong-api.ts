@@ -80,7 +80,7 @@ function clientIp(req: Request) {
   );
 }
 
-/** Không bao giờ trả cả danh sách: chỉ tên phòng, sơ đồ và (nếu có ?ma=) một người. */
+/** Không bao giờ trả cả danh sách: chỉ tên kỳ thi và (nếu có ?ma=) một người kèm sơ đồ phòng của người đó. */
 export function getRoom(req: Request, rawId: string) {
   return guarded(async (kv) => {
     const id = parseRoomId(rawId);
@@ -91,12 +91,14 @@ export function getRoom(req: Request, rawId: string) {
       const n = await kv.incr(`rl:${clientIp(req)}:${id}:${minute}`, 120);
       if (n > LOOKUPS_PER_MINUTE) return err(429, "Bạn tra cứu quá nhiều lần. Hãy đợi một phút rồi thử lại.");
     }
-    const room = parseStored(await kv.get(`phong:${id}`));
-    if (!room) return err(404, NOT_FOUND_ROOM);
-    const base = { title: room.title, room: room.room, expiresAt: room.expiresAt };
+    const stored = parseStored(await kv.get(`phong:${id}`));
+    if (!stored) return err(404, NOT_FOUND_ROOM);
+    const base = { title: stored.title, expiresAt: stored.expiresAt };
     if (ma === null) return json(base);
-    const person = findPerson(room.people, ma.slice(0, 100));
-    if (!person) return json({ error: "Không tìm thấy mã này. Kiểm tra lại hoặc hỏi giám thị.", code: "person" }, 404);
-    return json({ ...base, person });
+    const found = findPerson(stored.people, ma.slice(0, 100));
+    const room = found && stored.rooms[found.room];
+    if (!found || !room) return json({ error: "Không tìm thấy mã này. Kiểm tra lại hoặc hỏi giám thị.", code: "person" }, 404);
+    const { code, session, seat, name, unit, field } = found;
+    return json({ ...base, sessions: stored.sessions, room, person: { code, session, seat, name, unit, field } });
   });
 }

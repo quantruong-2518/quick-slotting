@@ -475,13 +475,11 @@ Vì dữ liệu thí sinh là dữ liệu nhạy cảm, sản phẩm tuân theo 
 
 ### Hạn chế hiện tại
 
-- Mới xếp cho **một phòng** mỗi lần.
 - Cần có mạng để tra cứu bằng điện thoại.
 - Kết quả xếp mỗi lần chạy có thể khác nhau (vì có yếu tố ngẫu nhiên) – vẫn đúng luật, chỉ khác cách xếp.
 
 ### Hướng phát triển
 
-- Xếp **nhiều phòng / nhiều đợt** trong một lần.
 - **Khoá cố định** một số người vào chỗ trước khi xếp (ví dụ người khuyết tật cần ngồi gần cửa).
 - **In giấy báo chỗ ngồi** có sẵn mã QR.
 - Thêm bộ kiểm thử giao diện tự động cho toàn bộ luồng 3 bước.

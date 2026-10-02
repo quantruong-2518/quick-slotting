@@ -13,8 +13,10 @@ const NOT_FOUND = "Không tìm thấy phòng thi (mã sai hoặc đã hết hạ
 
 interface Found {
   title: string;
+  /** Tổng số ca của kỳ thi; 1 thì không cần ghi "Ca …". */
+  sessions: number;
   room: Omit<RoomConfig, "id">;
-  person: { code: string; seat: number; name: string; unit: string };
+  person: { code: string; session: number; seat: number; name: string; unit: string; field: string };
 }
 type Meta = { state: "loading" } | { state: "error"; message: string } | { state: "ready"; title: string };
 
@@ -43,6 +45,7 @@ export default function Lookup({ roomId }: { roomId: string | null }) {
   const seats = useMemo(() => (found ? buildSeats({ id: "share", ...found.room }) : []), [found]);
   const seat = found ? seats.find((s) => s.number === found.person.seat) ?? null : null;
   const pos = seat ? seatPosition(seat) : null;
+  const showPlace = !!found && (found.sessions > 1 || found.title !== found.room.name);
   const typedCode = normalizeCode(code);
 
   async function find() {
@@ -152,6 +155,7 @@ export default function Lookup({ roomId }: { roomId: string | null }) {
             <span className="text-title leading-7 font-semibold">{found.person.name}</span>
             <span className="text-sm text-white/90">{found.person.code}</span>
             <span className="text-sm text-white/90">{found.person.unit}</span>
+            {found.person.field && <span className="text-sm text-white/90">Lĩnh vực: {found.person.field}</span>}
           </div>
           <div className="flex shrink-0 flex-col items-end">
             <span className="text-sm text-white/90">Máy số</span>
@@ -159,6 +163,17 @@ export default function Lookup({ roomId }: { roomId: string | null }) {
           </div>
         </div>
       </section>
+      {showPlace && (
+        <div className="flex flex-wrap items-baseline justify-center gap-x-3 border-b border-line bg-brand-soft px-6 py-3.5 text-2xl font-bold text-brand-ink">
+          {found.sessions > 1 && (
+            <>
+              <span>Ca {found.person.session}</span>
+              <span aria-hidden="true" className="opacity-50">·</span>
+            </>
+          )}
+          <span>{found.room.name}</span>
+        </div>
+      )}
       <div className="grid grid-cols-3 divide-x divide-line border-b border-line">
         {[["Khoang", pos.block], ["Hàng", pos.row], ["Ghế", pos.chair]].map(([label, v]) => (
           <div key={label} className="flex flex-col items-center py-4">
@@ -168,7 +183,7 @@ export default function Lookup({ roomId }: { roomId: string | null }) {
         ))}
       </div>
       <p className="bg-page px-6 py-4 leading-6">
-        Vào phòng, đi tới khoang thứ {pos.block} (tính từ trái), đếm tới hàng {pos.row}, ngồi ghế thứ {pos.chair} từ trái sang.
+        Vào {showPlace ? found.room.name : "phòng"}, đi tới khoang thứ {pos.block} (tính từ trái), đếm tới hàng {pos.row}, ngồi ghế thứ {pos.chair} từ trái sang.
       </p>
       <div className="flex flex-1 flex-col items-center justify-center py-4">
         {showMap ? (
@@ -213,9 +228,9 @@ function Shell({ children }: { children: React.ReactNode }) {
 function Brand({ title }: { title: string }) {
   return (
     <div className="flex items-center gap-2.5">
-      <Logo className="size-6" />
-      <span className="text-body font-semibold">Xếp chỗ nhanh</span>
-      <span className="ml-auto text-sm text-white/85">{title}</span>
+      <Logo className="size-6 shrink-0" />
+      <span className="shrink-0 text-body font-semibold">Xếp chỗ nhanh</span>
+      <span className="ml-auto min-w-0 truncate text-sm text-white/85">{title}</span>
     </div>
   );
 }

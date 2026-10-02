@@ -7,12 +7,14 @@ export const unitKey = (s: string) => stripVN(s).toLowerCase().replace(/[^a-z0-9
 const clean = (s: unknown) => String(s ?? "").replace(/\s+/g, " ").trim();
 
 export interface RawRow { line: number; cells: string[] }
-export interface Entry { line: number; name: string; code: string; unit: string; problem?: "missing" | "duplicate" }
+export interface Entry { line: number; name: string; code: string; unit: string; field: string; problem?: "missing" | "duplicate" }
 export interface Analysis {
   entries: Entry[];
   people: Person[];
   units: Unit[];
   columnNote: string;
+  /** Danh sách có cột Lĩnh vực dự kiểm tra. */
+  hasField: boolean;
   missing: { entry: Entry; fields: string[] }[];
   duplicates: { entry: Entry; first: Entry }[];
   merged: Unit[];
@@ -50,14 +52,14 @@ export function parseDelimited(text: string, d = detectDelimiter(text)): RawRow[
 // So khớp CẢ ô (không phải chứa một phần), để tránh nhận nhầm tên người ("Ma Văn Kháng")
 // hay tên đơn vị ("Cơ quan Thường trực…", "Đơn vị 3") thành tiêu đề cột.
 const HEADER_LABEL_RE =
-  /^(stt|so tt|tt|ho va ten|ho ten|ten|ma|ma cc|ma cong chuc|ma so|ma du thi|don vi|don vi cong tac|co quan|noi cong tac|phong ban)$/;
+  /^(stt|so tt|tt|ho va ten|ho ten|ten|ma|ma cc|ma cong chuc|ma so|ma du thi|don vi|don vi cong tac|co quan|noi cong tac|phong ban|linh vuc(?: du)?(?: kiem tra| thi)?)$/;
 const isHeaderLabel = (x: string) => HEADER_LABEL_RE.test(x.replace(/[.:]+$/, ""));
 
 /** Nhận diện cột, kiểm tra thiếu và trùng mã, gộp tên đơn vị viết khác nhau. */
 export function analyzeRows(raw: RawRow[]): Analysis {
   const rows = raw.map((r) => ({ line: r.line, cells: r.cells.map(clean) })).filter((r) => r.cells.some(Boolean));
   if (!rows.length) {
-    return { entries: [], people: [], units: [], columnNote: "", missing: [], duplicates: [], merged: [] };
+    return { entries: [], people: [], units: [], columnNote: "", hasField: false, missing: [], duplicates: [], merged: [] };
   }
   // Cho phép có dòng tiêu đề văn bản (vd "DANH SÁCH NGƯỜI DỰ THI") phía trên dòng tiêu đề cột thật.
   // Một dòng chỉ được coi là tiêu đề khi có ít nhất 2 ô khớp nguyên ô với nhãn cột quen thuộc,
@@ -70,25 +72,32 @@ export function analyzeRows(raw: RawRow[]): Analysis {
   const hasHeader = headerIdx >= 0;
   const headerRow = hasHeader ? rows[headerIdx] : rows[0];
   const head = headerRow.cells.map(norm);
-  const idx = { name: 0, code: 1, unit: 2 };
+  // Không có tiêu đề thì theo thứ tự file mẫu: Họ tên, Mã CC, Đơn vị, Lĩnh vực.
+  const idx = { name: 0, code: 1, unit: 2, field: 3 };
   let data = rows;
   if (hasHeader) {
     data = rows.slice(headerIdx + 1);
-    const unit = head.findIndex((x) => /don vi|co quan|noi cong tac|phong ban/.test(x));
-    const code = head.findIndex((x, i) => i !== unit && /(^|\s)ma(\s|$)/.test(x));
-    const name = head.findIndex((x, i) => i !== unit && i !== code && /(^|\s)(ho va ten|ho ten|ten)(\s|$)/.test(x));
-    const used = new Set([name, code, unit].filter((v) => v >= 0));
+    const field = head.findIndex((x) => /(^|\s)linh vuc(\s|$)/.test(x));
+    const unit = head.findIndex((x, i) => i !== field && /don vi|co quan|noi cong tac|phong ban/.test(x));
+    const code = head.findIndex((x, i) => i !== field && i !== unit && /(^|\s)ma(\s|$)/.test(x));
+    const name = head.findIndex((x, i) => i !== field && i !== unit && i !== code && /(^|\s)(ho va ten|ho ten|ten)(\s|$)/.test(x));
+    const used = new Set([name, code, unit, field].filter((v) => v >= 0));
     const free = head.map((_, i) => i).filter((i) => !used.has(i) && !/^stt$/.test(head[i]));
     idx.name = name >= 0 ? name : free.shift() ?? 0;
     idx.code = code >= 0 ? code : free.shift() ?? 1;
     idx.unit = unit >= 0 ? unit : free.shift() ?? 2;
+    idx.field = field; // lĩnh vực là cột thêm: chỉ nhận khi có tiêu đề rõ ràng
   }
-  const label = (i: number) => (hasHeader && headerRow.cells[i] ? `"${headerRow.cells[i]}"` : `cột ${String.fromCharCode(65 + i)}`);
-  const columnNote = `Họ tên: ${label(idx.name)} · Mã CC: ${label(idx.code)} · Đơn vị: ${label(idx.unit)}`;
 
   const entries: Entry[] = data.map((r) => ({
     line: r.line, name: r.cells[idx.name] ?? "", code: r.cells[idx.code] ?? "", unit: r.cells[idx.unit] ?? "",
+    field: idx.field >= 0 ? r.cells[idx.field] ?? "" : "",
   }));
+  const hasField = idx.field >= 0 && (hasHeader || entries.some((e) => e.field));
+  const label = (i: number) => (hasHeader && headerRow.cells[i] ? `"${headerRow.cells[i]}"` : `cột ${String.fromCharCode(65 + i)}`);
+  const columnNote =
+    `Họ tên: ${label(idx.name)} · Mã CC: ${label(idx.code)} · Đơn vị: ${label(idx.unit)}` +
+    (hasField ? ` · Lĩnh vực: ${label(idx.field)}` : "");
   const missing: Analysis["missing"] = [];
   const duplicates: Analysis["duplicates"] = [];
   const good: Entry[] = [];
@@ -121,7 +130,7 @@ export function analyzeRows(raw: RawRow[]): Analysis {
   const units: Unit[] = keyed.map((u, i) => ({ id: i, name: u.name, count: u.count, variants: u.variants }));
   const people: Person[] = good.map((e) => ({ ...e, unitId: idOf.get(unitKey(e.unit) || e.unit)! }));
 
-  return { entries, people, units, columnNote, missing, duplicates, merged: units.filter((u) => u.variants.length > 1) };
+  return { entries, people, units, columnNote, hasField, missing, duplicates, merged: units.filter((u) => u.variants.length > 1) };
 }
 
 /** Chuẩn hoá mã CC người dùng gõ khi tra cứu. */

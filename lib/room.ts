@@ -14,6 +14,7 @@ export function newRoom(partial: Partial<RoomConfig> = {}): RoomConfig {
     style: partial.style ?? "snake",
     start: partial.start ?? 1,
     off: partial.off ?? [],
+    reserve: partial.reserve ?? 0,
   };
 }
 

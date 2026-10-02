@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { POST } from "./route";
 import { GET, PUT } from "./[id]/route";
 
+const room = (name: string) => ({ name, blocks: 1, rows: 2, cols: 2, style: "snake", start: 1, off: [] });
 const body = (extra: object = {}) => ({
   title: "Kỳ thi",
-  room: { name: "P1", blocks: 1, rows: 2, cols: 2, style: "snake", start: 1, off: [] },
-  people: [["CC1038", 3, "Nguyễn An", "Sở A"], ["CC2001", 4, "Trần Bình", "Sở B"]],
+  rooms: [room("P1"), room("P2")],
+  people: [["CC1038", 1, 0, 3, "Nguyễn An", "Sở A", "Kế toán"], ["CC2001", 2, 1, 4, "Trần Bình", "Sở B", ""]],
   ...extra,
 });
 const post = (b: unknown, ip = "2.2.2.2") =>
@@ -30,15 +31,29 @@ describe("/api/phong", () => {
 
     const hit = await get(id, "?ma=cc1038");
     expect(hit.status).toBe(200);
-    expect((await hit.json()).person).toEqual({ code: "CC1038", seat: 3, name: "Nguyễn An", unit: "Sở A" });
-    expect((await (await get(id, "?ma=2001")).json()).person.name).toBe("Trần Bình");
+    const found = await hit.json();
+    expect(found.person).toEqual({ code: "CC1038", session: 1, seat: 3, name: "Nguyễn An", unit: "Sở A", field: "Kế toán" });
+    expect(found.sessions).toBe(2);
+    expect(found.room.name).toBe("P1");
+    expect(JSON.stringify(found)).not.toContain("Trần Bình");
+    const other = await (await get(id, "?ma=2001")).json();
+    expect(other.person).toMatchObject({ name: "Trần Bình", session: 2 });
+    expect(other.room.name).toBe("P2");
     expect((await get(id, "?ma=zzz")).status).toBe(404);
 
     expect((await put(id, "sai-token", body())).status).toBe(403);
-    const next = body({ people: [["CC1038", 9, "Nguyễn An", "Sở A"]] });
+    const next = body({ people: [["CC1038", 1, 0, 9, "Nguyễn An", "Sở A", ""]] });
     expect((await put(id, token, next)).status).toBe(200);
     expect((await (await get(id, "?ma=CC1038")).json()).person.seat).toBe(9);
     expect((await get(id, "?ma=CC2001")).status).toBe(404);
+  });
+
+  it("vẫn nhận dữ liệu dạng cũ một phòng", async () => {
+    const legacy = { title: "P1", room: room("P1"), people: [["CC1038", 3, "Nguyễn An", "Sở A"]] };
+    const { id } = await (await post(legacy, "3.3.3.3")).json();
+    const found = await (await get(id, "?ma=CC1038")).json();
+    expect(found.person).toEqual({ code: "CC1038", session: 1, seat: 3, name: "Nguyễn An", unit: "Sở A", field: "" });
+    expect(found.sessions).toBe(1);
   });
 
   it("từ chối dữ liệu sai và phòng không tồn tại", async () => {
