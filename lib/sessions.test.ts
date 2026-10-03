@@ -62,12 +62,12 @@ describe("chia người vào ca và phòng", () => {
     groups.forEach((row, s) => row.forEach((g, r) => expect(g).toHaveLength(counts[s][r])));
   });
 
-  it("mỗi ĐV rải đều khắp các ô (lệch không quá 1 người so với tỉ lệ)", () => {
+  it("mỗi ĐV rải đều khắp các ô (phòng bằng nhau: lệch dưới 1 người so với tỉ lệ)", () => {
     groups.flat().forEach((g) => {
       sizes.forEach((size, u) => {
         const expected = (size * g.length) / unitOf.length;
         const got = g.filter((p) => unitOf[p] === u).length;
-        expect(Math.abs(got - expected)).toBeLessThan(1.5);
+        expect(Math.abs(got - expected)).toBeLessThan(1);
       });
     });
   });

@@ -48,7 +48,8 @@ export function planCounts(people: number, capacities: number[], sessions: numbe
  *
  * Cách làm: mỗi ô có n "vé" đặt cách đều trên đoạn [0, 1); xếp mọi vé theo vị trí,
  * rồi phát lần lượt cho danh sách đã gom theo ĐV. Một ĐV chiếm một đoạn liền nên
- * nhận vé của mọi ô theo đúng tỉ lệ (chênh không quá 1 người mỗi ô).
+ * nhận vé của mọi ô gần đúng tỉ lệ: các phòng cỡ gần nhau thì lệch dưới 1 người,
+ * phòng to nhỏ chênh nhiều thì có thể lệch 2–3 người.
  */
 export function distribute(unitOf: number[], counts: number[][]): number[][][] {
   const tickets: { t: number; s: number; r: number }[] = [];
