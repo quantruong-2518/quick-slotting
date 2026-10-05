@@ -96,24 +96,77 @@ function sheetName(name: string, used: Set<string>): string {
   return out;
 }
 
+export type ExcelSplit = "one" | "session" | "room";
+/** Một file kết quả: tên file và các ca, các phòng (chỉ số) nằm trong file đó. */
+export interface ExcelFile {
+  name: string;
+  sessions: number[];
+  rooms: number[];
+}
+
+const fileSafe = (s: string) => s.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim() || "phong";
+
+/**
+ * Các file sẽ tải: chọn ca và phòng (null = tất cả), rồi gộp một file, mỗi ca một file hoặc mỗi phòng một file.
+ * Tên file ghi ca hoặc phòng khi file chỉ có một ca, một phòng.
+ */
+export function excelFiles(
+  roomNames: string[],
+  sessionCount: number,
+  pick: { session: number | null; room: number | null; split: ExcelSplit },
+): ExcelFile[] {
+  const ss = pick.session === null ? Array.from({ length: sessionCount }, (_, s) => s) : [pick.session];
+  const rs = pick.room === null ? roomNames.map((_, r) => r) : [pick.room];
+  const parts =
+    pick.split === "session" ? ss.map((s) => ({ sessions: [s], rooms: rs }))
+    : pick.split === "room" ? rs.map((r) => ({ sessions: ss, rooms: [r] }))
+    : [{ sessions: ss, rooms: rs }];
+  const used = new Set<string>();
+  return parts.map((p) => {
+    const ca = p.sessions.length === 1 && sessionCount > 1 ? `-ca-${p.sessions[0] + 1}` : "";
+    const phong = p.rooms.length === 1 ? `-${fileSafe(roomNames[p.rooms[0]])}` : "";
+    const base = `xep-cho${ca}${phong || (ca ? "" : `-${p.rooms.length}-phong-${p.sessions.length}-ca`)}`;
+    let name = base;
+    for (let k = 2; used.has(name.toLowerCase()); k++) name = `${base} (${k})`;
+    used.add(name.toLowerCase());
+    return { ...p, name: `${name}.xlsx` };
+  });
+}
+
 /**
  * File kết quả: mỗi phòng của mỗi ca một trang sơ đồ (ô tô màu theo ĐV, ghi số máy, họ tên, Mã CC, ĐV, lĩnh vực),
  * cuối cùng là trang "Danh sách" theo ca, phòng, số máy. items[ca][phòng][ghế] = chỉ số người hoặc -1.
+ * `only` giới hạn file ở một số ca, một số phòng (mặc định là tất cả); số ca ghi trong file vẫn là số ca thật.
  */
-export async function resultXlsx(rooms: RoomConfig[], seatsOf: Seat[][], items: number[][][], people: Person[]): Promise<Blob> {
+export async function resultXlsx(
+  rooms: RoomConfig[],
+  seatsOf: Seat[][],
+  items: number[][][],
+  people: Person[],
+  only: { sessions?: number[]; rooms?: number[] } = {},
+): Promise<Blob> {
   const ExcelJS = await loadExcel();
   const wb = new ExcelJS.Workbook();
   const thin = { style: "thin" as const, color: { argb: "FF9FB0D6" } };
   const sessions = items.length;
+  const ss = only.sessions ?? items.map((_, s) => s);
+  const rs = only.rooms ?? rooms.map((_, r) => r);
   const hasField = people.some((p) => p.field);
   const used = new Set(["danh sách"]);
+  // Tên trang ghi thứ thay đổi trong file: cùng một ca thì là tên phòng, cùng một phòng thì là ca.
+  const tab = (s: number, r: number) =>
+    ss.length * rs.length === 1 ? "Sơ đồ"
+    : rs.length === 1 ? `Ca ${s + 1}`
+    : ss.length === 1 ? rooms[r].name
+    : slotName(s, rooms[r].name, sessions);
 
-  items.forEach((row, s) =>
-    row.forEach((its, r) => {
+  ss.forEach((s) =>
+    rs.forEach((r) => {
+      const its = items[s][r];
       const room = rooms[r];
       const seats = seatsOf[r];
       const title = slotName(s, room.name, sessions);
-      const map = wb.addWorksheet(sheetName(sessions * rooms.length === 1 ? "Sơ đồ" : title, used));
+      const map = wb.addWorksheet(sheetName(tab(s, r), used));
       const filled = its.filter((x) => x >= 0).length;
       const head = map.getCell(1, 1);
       head.value = `${title}: ${filled} người / ${seats.length} máy`;
@@ -166,9 +219,10 @@ export async function resultXlsx(rooms: RoomConfig[], seatsOf: Seat[][], items: 
   ];
   list.getRow(1).font = { bold: true };
   list.views = [{ state: "frozen", ySplit: 1 }];
-  items.forEach((row, s) =>
-    row.forEach((its, r) =>
+  ss.forEach((s) =>
+    rs.forEach((r) =>
       seatsOf[r].forEach((x, i) => {
+        const its = items[s][r];
         const p = its[i] >= 0 ? people[its[i]] : null;
         list.addRow({
           ca: s + 1, phong: rooms[r].name, n: x.number, k: x.block + 1, h: x.row + 1, g: x.col + 1,

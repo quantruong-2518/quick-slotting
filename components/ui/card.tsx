@@ -31,6 +31,12 @@ export const DownloadIcon = () => (
   </svg>
 );
 
+export const EditIcon = ({ className = "size-4" }: { className?: string }) => (
+  <svg viewBox="0 0 18 18" fill="none" aria-hidden="true" className={className}>
+    <path d="M3 15l.7-3.3 8.4-8.4a1.5 1.5 0 012.1 0l.5.5a1.5 1.5 0 010 2.1l-8.4 8.4L3 15zM10.8 4.6l2.6 2.6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 export const Logo = ({ className = "size-8" }: { className?: string }) => (
   <svg viewBox="0 0 40 40" aria-hidden="true" className={className}>
     <rect width="40" height="40" rx="8" fill="#fff" />

@@ -25,6 +25,10 @@ export function roomDims(sizes: BlockSize[]): Dims {
   return { blocks: sizes.length, rows, cols, ...(uniform ? {} : { sizes: sizes.map((b) => ({ rows: b.rows, cols: b.cols })) }) };
 }
 
+/** Hai sơ đồ chỉ khác tên: ghế, số máy, máy dự phòng y như nhau nên kết quả xếp vẫn dùng được. */
+export const sameExceptName = (a: RoomConfig, b: RoomConfig) =>
+  JSON.stringify({ ...a, name: "" }) === JSON.stringify({ ...b, name: "" });
+
 /** Số ô của phòng khi chưa bỏ máy nào. */
 export const cellCount = (room: Dims) => blockLayout(room).reduce((n, b) => n + b.rows * b.cols, 0);
 

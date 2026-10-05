@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockLayout, buildNeighbors, buildSeats, cellCount, newRoom, roomDims } from "./room";
+import { blockLayout, buildNeighbors, buildSeats, cellCount, newRoom, roomDims, sameExceptName } from "./room";
 import { arrange, seededRng } from "./seating";
 import { analyzeRows, parseDelimited } from "./people";
 
@@ -18,6 +18,14 @@ describe("sơ đồ phòng", () => {
     expect(seats[14].gcol).toBe(14);
     expect(seats[15].gcol).toBe(14); // hàng 2 đi ngược lại
     expect(seats[15].number).toBe(16);
+  });
+
+  it("sameExceptName: đổi tên thì vẫn coi là cùng sơ đồ, đổi thứ khác thì không", () => {
+    expect(sameExceptName(room, { ...room, name: "Phòng 201" })).toBe(true);
+    expect(sameExceptName(room, { ...room, off: ["0-0"] })).toBe(false);
+    expect(sameExceptName(room, { ...room, reserve: 2 })).toBe(false);
+    expect(sameExceptName(room, { ...room, start: 101 })).toBe(false);
+    expect(sameExceptName(room, { ...room, id: "khác" })).toBe(false);
   });
 
   it("lối đi giữa các khoang cắt quan hệ kề", () => {

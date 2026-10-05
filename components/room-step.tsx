@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { Card, CheckIcon } from "./ui/card";
+import { EditableName } from "./ui/editable-name";
 import { NumberStepper } from "./ui/number-stepper";
 import { Segmented } from "./ui/segmented";
 import { SeatZones } from "./seat-zones";
@@ -314,16 +315,13 @@ function RoomEditor({
       <Card className="flex min-w-0 flex-1 flex-col gap-4" aria-label="Sơ đồ phòng">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-baseline gap-2">
-            {room ? (
-              <input
-                aria-label="Tên sơ đồ"
-                value={room.name}
-                onChange={(e) => update({ ...room, name: e.target.value })}
-                className="w-44 rounded-chip bg-transparent text-lg font-semibold outline-none hover:bg-subtle focus:bg-subtle"
-              />
-            ) : (
-              <h2 className="text-lg font-semibold">Sơ đồ phòng</h2>
-            )}
+            <h2 className="flex min-w-0 text-lg font-semibold">
+              {room ? (
+                <EditableName value={room.name} label="Đổi tên phòng" onChange={(name) => update({ ...room, name })} />
+              ) : (
+                "Sơ đồ phòng"
+              )}
+            </h2>
             {room && <span className="text-muted">{seats.length} máy{reserve ? ` · ${reserve} dự phòng` : ""}</span>}
           </div>
           <div className="flex items-center gap-2">

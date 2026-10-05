@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
-import { readXlsx, resultXlsx, templateXlsx } from "./excel";
+import { excelFiles, readXlsx, resultXlsx, templateXlsx } from "./excel";
 import { analyzeRows } from "./people";
 import { buildSeats, newRoom, roomDims } from "./room";
 import type { Person } from "./types";
@@ -126,11 +126,83 @@ describe("file kết quả (.xlsx)", () => {
     expect(wb.getWorksheet("Danh sách")!.getRow(5).values).toEqual([undefined, 4, 1, 2, 1, "Chi", "CC3", "Sở A", ""]);
   });
 
+  it("tải riêng một ca: mỗi phòng một trang mang tên phòng, vẫn ghi đúng số ca thật", async () => {
+    const rooms = [
+      newRoom({ id: "a", name: "Phòng 1", blocks: 1, rows: 1, cols: 2 }),
+      newRoom({ id: "b", name: "Phòng 2", blocks: 1, rows: 1, cols: 2 }),
+    ];
+    const seatsOf = rooms.map((r) => buildSeats(r));
+    const items = [[[0, -1], [1, -1]], [[-1, 2], [-1, -1]]];
+    const wb = await open(await resultXlsx(rooms, seatsOf, items, people, { sessions: [1] }));
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["Phòng 1", "Phòng 2", "Danh sách"]);
+    expect(String(wb.getWorksheet("Phòng 1")!.getCell(1, 1).value)).toBe("Ca 2 · Phòng 1: 1 người / 2 máy");
+    const list = wb.getWorksheet("Danh sách")!;
+    expect(list.rowCount).toBe(1 + 2 * 2);
+    expect(list.getRow(3).values).toEqual([undefined, 2, "Phòng 1", 2, 1, 1, 2, "Chi", "CC3", "Sở A", ""]);
+  });
+
+  it("tải riêng một phòng: mỗi ca một trang; riêng một phòng một ca thì trang tên Sơ đồ", async () => {
+    const rooms = [
+      newRoom({ id: "a", name: "Phòng 1", blocks: 1, rows: 1, cols: 2 }),
+      newRoom({ id: "b", name: "Phòng 2", blocks: 1, rows: 1, cols: 2 }),
+    ];
+    const seatsOf = rooms.map((r) => buildSeats(r));
+    const items = [[[0, -1], [1, -1]], [[-1, 2], [-1, -1]]];
+    const byRoom = await open(await resultXlsx(rooms, seatsOf, items, people, { rooms: [1] }));
+    expect(byRoom.worksheets.map((w) => w.name)).toEqual(["Ca 1", "Ca 2", "Danh sách"]);
+    expect(byRoom.getWorksheet("Danh sách")!.getRow(2).values).toEqual([undefined, 1, "Phòng 2", 1, 1, 1, 1, "Bình", "CC2", "Sở B", "Thuế"]);
+    const single = await open(await resultXlsx(rooms, seatsOf, items, people, { sessions: [0], rooms: [1] }));
+    expect(single.worksheets.map((w) => w.name)).toEqual(["Sơ đồ", "Danh sách"]);
+    expect(single.getWorksheet("Danh sách")!.rowCount).toBe(1 + 2);
+  });
+
   it("một phòng, một ca, không có lĩnh vực: giữ trang Sơ đồ và bỏ các cột thừa", async () => {
     const room = newRoom({ id: "a", name: "P", blocks: 1, rows: 1, cols: 3 });
     const plain = people.map((p) => ({ ...p, field: "" }));
     const wb = await open(await resultXlsx([room], [buildSeats(room)], [[[0, 1, 2]]], plain));
     expect(wb.worksheets.map((w) => w.name)).toEqual(["Sơ đồ", "Danh sách"]);
     expect(wb.getWorksheet("Danh sách")!.getRow(1).values).toEqual([undefined, "Số máy", "Khoang", "Hàng", "Ghế", "Họ tên", "Mã CC", "Đơn vị"]);
+  });
+});
+
+describe("chia file kết quả", () => {
+  const names = ["Phòng 201", "Phòng 202", "Lab A/B"];
+  const all = { session: null, room: null };
+
+  it("mỗi ca một file, mỗi file đủ các phòng", () => {
+    expect(excelFiles(names, 2, { ...all, split: "session" })).toEqual([
+      { name: "xep-cho-ca-1.xlsx", sessions: [0], rooms: [0, 1, 2] },
+      { name: "xep-cho-ca-2.xlsx", sessions: [1], rooms: [0, 1, 2] },
+    ]);
+  });
+
+  it("mỗi phòng một file, mỗi file đủ các ca; tên phòng bỏ ký tự không đặt tên file được", () => {
+    expect(excelFiles(names, 2, { ...all, split: "room" })).toEqual([
+      { name: "xep-cho-Phòng 201.xlsx", sessions: [0, 1], rooms: [0] },
+      { name: "xep-cho-Phòng 202.xlsx", sessions: [0, 1], rooms: [1] },
+      { name: "xep-cho-Lab A B.xlsx", sessions: [0, 1], rooms: [2] },
+    ]);
+  });
+
+  it("gộp một file", () => {
+    expect(excelFiles(names, 2, { ...all, split: "one" })).toEqual([{ name: "xep-cho-3-phong-2-ca.xlsx", sessions: [0, 1], rooms: [0, 1, 2] }]);
+    expect(excelFiles(["P"], 1, { ...all, split: "one" })).toEqual([{ name: "xep-cho-P.xlsx", sessions: [0], rooms: [0] }]);
+    // Chỉ có một ca thì tên file không cần ghi ca.
+    expect(excelFiles(names, 1, { ...all, split: "session" })[0].name).toBe("xep-cho-3-phong-1-ca.xlsx");
+  });
+
+  it("chỉ chọn một ca hoặc một phòng", () => {
+    expect(excelFiles(names, 3, { session: 2, room: null, split: "session" })).toEqual([{ name: "xep-cho-ca-3.xlsx", sessions: [2], rooms: [0, 1, 2] }]);
+    expect(excelFiles(names, 3, { session: 2, room: null, split: "room" }).map((f) => f.name)).toEqual([
+      "xep-cho-ca-3-Phòng 201.xlsx", "xep-cho-ca-3-Phòng 202.xlsx", "xep-cho-ca-3-Lab A B.xlsx",
+    ]);
+    expect(excelFiles(names, 3, { session: null, room: 1, split: "session" }).map((f) => f.name)).toEqual([
+      "xep-cho-ca-1-Phòng 202.xlsx", "xep-cho-ca-2-Phòng 202.xlsx", "xep-cho-ca-3-Phòng 202.xlsx",
+    ]);
+    expect(excelFiles(names, 3, { session: 0, room: 1, split: "one" })).toEqual([{ name: "xep-cho-ca-1-Phòng 202.xlsx", sessions: [0], rooms: [1] }]);
+  });
+
+  it("hai phòng trùng tên thì tên file không đè nhau", () => {
+    expect(excelFiles(["P", "p"], 1, { ...all, split: "room" }).map((f) => f.name)).toEqual(["xep-cho-P.xlsx", "xep-cho-p (2).xlsx"]);
   });
 });

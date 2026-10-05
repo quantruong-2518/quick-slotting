@@ -6,10 +6,12 @@ import { Card, CheckIcon, DownloadIcon, Notice, Pill } from "./ui/card";
 import { NumberStepper } from "./ui/number-stepper";
 import { Segmented } from "./ui/segmented";
 import { SeatZones } from "./seat-zones";
+import { EditableName } from "./ui/editable-name";
+import { ExportDialog } from "./export-dialog";
 import { MoveDialog } from "./move-dialog";
 import { ShareDialog } from "./share-dialog";
 import { unitColor } from "@/lib/colors";
-import { downloadBlob, resultXlsx } from "@/lib/excel";
+import { downloadBlob, excelFiles, resultXlsx, type ExcelFile } from "@/lib/excel";
 import { norm, normalizeCode } from "@/lib/people";
 import { buildSharePayload } from "@/lib/room-share";
 import { MAX_SESSIONS, capacityOf, slotName } from "@/lib/sessions";
@@ -26,7 +28,7 @@ const MAX_HITS = 50;
 
 export function ResultStep({
   rooms, seatsOf, nbOf, people, units, result, progress, adj, spare, sessions, minSessions,
-  onAdj, onSpare, onSessions, onRerun, onMove, onBack,
+  onAdj, onSpare, onSessions, onRerun, onMove, onRename, onBack,
 }: {
   rooms: RoomConfig[];
   seatsOf: Seat[][];
@@ -44,6 +46,8 @@ export function ResultStep({
   onSessions: (n: number) => void;
   onRerun: () => void;
   onMove: (a: SeatRef, b: SeatRef) => void;
+  /** Đổi tên phòng thứ r (không làm mất kết quả). */
+  onRename: (r: number, name: string) => void;
   onBack: () => void;
 }) {
   const running = progress !== null;
@@ -56,6 +60,7 @@ export function ResultStep({
   const [dialog, setDialog] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const S = result?.slots.length ?? sessions;
   const R = rooms.length;
@@ -116,6 +121,15 @@ export function ResultStep({
   function openShare() {
     setDialog(true);
     if (!share || share.expiresAt <= Date.now()) void publish(); // mã hết hạn thì tạo mã mới
+  }
+
+  async function download(files: ExcelFile[]) {
+    if (!items) return;
+    for (const [k, f] of files.entries()) {
+      // Cách nhau một nhịp để trình duyệt không bỏ sót file khi tải nhiều file liền nhau.
+      if (k) await new Promise((done) => setTimeout(done, 300));
+      downloadBlob(await resultXlsx(rooms, seatsOf, items, people, f), f.name);
+    }
   }
 
   function show(at: SeatRef) {
@@ -253,7 +267,10 @@ export function ResultStep({
         </div>
 
         <div className="flex items-baseline justify-between gap-4">
-          <h3 className="text-lg font-semibold">{slotName(cur.s, room.name, S)}</h3>
+          <h3 className="flex min-w-0 items-center gap-1.5 text-lg font-semibold">
+            {S > 1 && <span className="shrink-0">Ca {cur.s + 1} ·</span>}
+            <EditableName key={room.id} value={room.name} label="Đổi tên phòng" onChange={(name) => onRename(cur.r, name)} />
+          </h3>
           {slot && (
             <span className="text-body text-muted tabular-nums">
               {filled} người / {seats.length} máy
@@ -391,12 +408,10 @@ export function ResultStep({
             variant="primary"
             size="lg"
             disabled={!items || running}
-            onClick={async () =>
-              items &&
-              downloadBlob(
-                await resultXlsx(rooms, seatsOf, items, people),
-                R * S > 1 ? `xep-cho-${R}-phong-${S}-ca.xlsx` : `xep-cho-${room.name}.xlsx`,
-              )
+            onClick={() =>
+              R * S > 1
+                ? setExporting(true)
+                : void download(excelFiles(rooms.map((x) => x.name), S, { session: null, room: null, split: "one" }))
             }
           >
             <DownloadIcon /> Tải Excel
@@ -416,6 +431,14 @@ export function ResultStep({
           place={place}
           onMove={(to) => { onMove(moving, to); setMoving(null); show(to); }}
           onClose={() => setMoving(null)}
+        />
+      )}
+      {exporting && (
+        <ExportDialog
+          roomNames={rooms.map((x) => x.name)}
+          sessions={S}
+          onDownload={download}
+          onClose={() => setExporting(false)}
         />
       )}
       {dialog && (

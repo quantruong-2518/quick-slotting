@@ -5,7 +5,7 @@ import { AppHeader, type Step } from "./app-header";
 import { RoomStep, newEntry, type RoomEntry } from "./room-step";
 import { ListStep, type ListState } from "./list-step";
 import { ResultStep, type Plan } from "./result-step";
-import { buildNeighbors, buildSeats } from "@/lib/room";
+import { buildNeighbors, buildSeats, sameExceptName } from "@/lib/room";
 import { evaluate } from "@/lib/seating";
 import { MAX_SESSIONS, capacityOf, distribute, minSessions, planCounts, swapSeats } from "@/lib/sessions";
 import type { Adjacency, SeatRef, SpareMode } from "@/lib/types";
@@ -45,8 +45,14 @@ export default function Wizard() {
   }
   const setList = (l: ListState | null) => { setListState(l); reset(); };
   function updateEntry(patch: Partial<Omit<RoomEntry, "key">>) {
+    const old = entries[active].room;
     setEntries((es) => es.map((e, i) => (i === active ? { ...e, ...patch } : e)));
-    if ("room" in patch) reset();
+    // Chỉ đổi tên phòng thì kết quả đã xếp vẫn dùng được.
+    if ("room" in patch && !(old && patch.room && sameExceptName(old, patch.room))) reset();
+  }
+  function renameRoom(r: number, name: string) {
+    const id = rooms[r].id;
+    setEntries((es) => es.map((e) => (e.room?.id === id ? { ...e, room: { ...e.room, name } } : e)));
   }
   function addEntry() {
     setEntries((es) => [...es, newEntry()]);
@@ -165,6 +171,7 @@ export default function Wizard() {
             }}
             onRerun={() => { if (!keepEdits(RESEAT)) run(); }}
             onMove={move}
+            onRename={renameRoom}
             onBack={() => go(2)}
           />
         )}
