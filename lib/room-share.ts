@@ -1,7 +1,7 @@
-import { LIMITS } from "./room";
+import { LIMITS, blockLayout } from "./room";
 import { normalizeCode } from "./people";
 import { MAX_ROOMS, MAX_SESSIONS } from "./sessions";
-import type { RoomConfig, Seat, Unit, Person } from "./types";
+import type { BlockSize, RoomConfig, Seat, Unit, Person } from "./types";
 
 /** Phòng thi chia sẻ: chỉ chứa dữ liệu cần để tra chỗ, không có id cục bộ. */
 export type SharedRoom = Omit<RoomConfig, "id" | "reserve">;
@@ -26,7 +26,7 @@ export interface FoundPerson {
 }
 /** Bản ghi lưu trên máy chủ (khoá `phong:{ID}`). */
 export interface StoredRoom {
-  v: 2;
+  v: 3;
   title: string;
   rooms: SharedRoom[];
   sessions: number;
@@ -35,6 +35,8 @@ export interface StoredRoom {
   tokenHash: string;
   expiresAt: number;
 }
+/** Bản v2 giống hệt v3, chỉ là phòng chưa có `sizes` và `order` (khoang giống nhau, đánh số theo hàng ngang cả phòng). */
+type StoredRoomV2 = Omit<StoredRoom, "v"> & { v: 2 };
 /** Bản ghi cũ: một phòng, một ca, chưa có lĩnh vực. */
 interface StoredRoomV1 {
   v: 1;
@@ -109,15 +111,29 @@ function validateRoom(room: unknown): SharedRoom | string {
   if (!isStr(name, 200)) return "Tên phòng không hợp lệ.";
   if (!isInt(blocks, 1, LIMITS.blocks) || !isInt(rows, 1, LIMITS.rows) || !isInt(cols, 1, LIMITS.cols))
     return "Kích thước phòng vượt giới hạn.";
+  let sizes: BlockSize[] | undefined;
+  if (room.sizes !== undefined) {
+    if (!Array.isArray(room.sizes) || room.sizes.length !== blocks) return "Kích thước các khoang không hợp lệ.";
+    sizes = [];
+    for (const b of room.sizes) {
+      if (!isObj(b) || !isInt(b.rows, 1, LIMITS.rows) || !isInt(b.cols, 1, LIMITS.cols)) return "Kích thước phòng vượt giới hạn.";
+      sizes.push({ rows: b.rows, cols: b.cols });
+    }
+  }
   if (style !== "snake" && style !== "ltr") return "Kiểu đánh số không hợp lệ.";
+  if (room.order !== undefined && room.order !== "room" && room.order !== "block") return "Kiểu đánh số không hợp lệ.";
   if (!isInt(start, 0, 100_000)) return "Số máy bắt đầu không hợp lệ.";
-  if (!Array.isArray(off) || off.length > blocks * cols * rows) return "Danh sách máy bỏ không hợp lệ.";
+  const layout = blockLayout({ blocks, rows, cols, sizes });
+  if (!Array.isArray(off) || off.length > layout.reduce((n, b) => n + b.rows * b.cols, 0)) return "Danh sách máy bỏ không hợp lệ.";
   for (const k of off) {
     if (!isStr(k, 12, 3) || !/^\d+-\d+$/.test(k)) return "Danh sách máy bỏ không hợp lệ.";
     const [r, c] = k.split("-").map(Number);
-    if (r >= rows || c >= blocks * cols) return "Danh sách máy bỏ không hợp lệ.";
+    if (!layout.some((b) => c >= b.start && c < b.start + b.cols && r < b.rows)) return "Danh sách máy bỏ không hợp lệ.";
   }
-  return { name, blocks, rows, cols, style, start, off: [...(off as string[])] };
+  return {
+    name, blocks, rows, cols, ...(sizes ? { sizes } : {}),
+    style, ...(room.order === "block" ? { order: room.order } : {}), start, off: [...(off as string[])],
+  };
 }
 
 /** Kiểm tra chặt dữ liệu do máy khách gửi lên. Vẫn nhận dạng cũ một phòng `{ room, people: [mã, máy, tên, ĐV] }`. */
@@ -161,7 +177,9 @@ export function validatePayload(input: unknown): Validated {
 }
 
 const toShared = (r: RoomConfig): SharedRoom => ({
-  name: r.name, blocks: r.blocks, rows: r.rows, cols: r.cols, style: r.style, start: r.start, off: [...r.off],
+  name: r.name, blocks: r.blocks, rows: r.rows, cols: r.cols,
+  ...(r.sizes ? { sizes: r.sizes.map((b) => ({ rows: b.rows, cols: b.cols })) } : {}),
+  style: r.style, ...(r.order === "block" ? { order: r.order } : {}), start: r.start, off: [...r.off],
 });
 
 /** Dựng dữ liệu chia sẻ từ kết quả xếp chỗ: items[ca][phòng][ghế] = chỉ số người, hoặc -1. */
@@ -192,7 +210,7 @@ export function toStored(payload: SharePayload, tokenHash: string, now = Date.no
     sessions = Math.max(sessions, session);
   }
   return {
-    v: 2,
+    v: 3,
     title: payload.title,
     rooms: payload.rooms,
     sessions,
@@ -219,17 +237,17 @@ export function findPerson(people: StoredRoom["people"], input: string): FoundPe
   return { code: key, session, room, seat, name, unit, field };
 }
 
-/** Đọc bản ghi đã lưu; bản v1 (một phòng) được đổi sang v2 với ca 1, phòng đầu tiên. */
+/** Đọc bản ghi đã lưu; bản v2 dùng lại nguyên vẹn, bản v1 (một phòng) được đổi sang ca 1, phòng đầu tiên. */
 export function parseStored(raw: string | null): StoredRoom | null {
   if (!raw) return null;
   try {
-    const d = JSON.parse(raw) as StoredRoom | StoredRoomV1;
+    const d = JSON.parse(raw) as StoredRoom | StoredRoomV2 | StoredRoomV1;
     if (!d || !isObj(d.people)) return null;
-    if (d.v === 2) return Array.isArray(d.rooms) && d.rooms.length > 0 ? d : null;
+    if (d.v === 3 || d.v === 2) return Array.isArray(d.rooms) && d.rooms.length > 0 ? { ...d, v: 3 } : null;
     if (d.v !== 1 || !isObj(d.room)) return null;
     const people: StoredRoom["people"] = {};
     for (const [k, [seat, name, unit]] of Object.entries(d.people)) people[k] = [1, 0, seat, name, unit, ""];
-    return { v: 2, title: d.title, rooms: [d.room], sessions: 1, people, tokenHash: d.tokenHash, expiresAt: d.expiresAt };
+    return { v: 3, title: d.title, rooms: [d.room], sessions: 1, people, tokenHash: d.tokenHash, expiresAt: d.expiresAt };
   } catch {
     return null;
   }

@@ -3,10 +3,12 @@ import {
   ID_ALPHABET, buildSharePayload, findPerson, generateRoomId, generateToken, hashToken,
   parseRoomId, parseStored, toStored, validatePayload,
 } from "./room-share";
-import { buildSeats, newRoom } from "./room";
+import { buildSeats, newRoom, roomDims } from "./room";
 import type { Person, Unit } from "./types";
 
 const room = { name: "P1", blocks: 2, rows: 2, cols: 2, style: "snake", start: 1, off: ["0-1"] };
+/** Khoang 1: 2 hàng × 2 cột, khoang 2: 1 hàng × 3 cột. */
+const oddRoom = { ...room, name: "P3", rows: 2, cols: 3, sizes: [{ rows: 2, cols: 2 }, { rows: 1, cols: 3 }], off: ["0-4"] };
 const good = () => ({
   title: "Kỳ thi",
   rooms: [{ ...room, off: [...room.off] }, { ...room, name: "P2", off: [] }],
@@ -49,8 +51,13 @@ describe("validatePayload", () => {
     ["quá nhiều phòng", { ...good(), rooms: Array.from({ length: 13 }, () => room) }],
     ["phòng quá lớn", { ...good(), rooms: [{ ...room, rows: 31, off: [] }] }],
     ["kiểu đánh số lạ", { ...good(), rooms: [{ ...room, style: "x" }] }],
+    ["thứ tự đánh số lạ", { ...good(), rooms: [{ ...room, order: "x" }] }],
     ["ô bỏ ngoài phòng", { ...good(), rooms: [{ ...room, off: ["9-9"] }] }],
     ["ô bỏ sai dạng", { ...good(), rooms: [{ ...room, off: ["a"] }] }],
+    ["số khoang riêng không khớp số khoang", { ...good(), rooms: [{ ...oddRoom, sizes: [{ rows: 2, cols: 2 }] }] }],
+    ["khoang riêng quá lớn", { ...good(), rooms: [{ ...oddRoom, sizes: [{ rows: 2, cols: 2 }, { rows: 1, cols: 11 }] }] }],
+    ["khoang riêng sai dạng", { ...good(), rooms: [{ ...oddRoom, sizes: [{ rows: 2, cols: 2 }, [1, 3]] }] }],
+    ["ô bỏ nằm dưới khoang ngắn hơn", { ...good(), rooms: [{ ...oddRoom, off: ["1-2"] }] }],
     ["dòng thiếu cột", { ...good(), people: [["CC1", 1, 0, 1, "An", "A"]] }],
     ["số máy không phải số", { ...good(), people: [["CC1", 1, 0, "1", "An", "A", ""]] }],
     ["ca bằng 0", { ...good(), people: [["CC1", 0, 0, 1, "An", "A", ""]] }],
@@ -63,6 +70,23 @@ describe("validatePayload", () => {
     ["quá 2000 người", { ...good(), people: Array.from({ length: 2001 }, (_, i) => [`M${i}`, 1, 0, i, "n", "u", ""]) }],
   ])("từ chối: %s", (_n, body) => {
     expect(validatePayload(body).ok).toBe(false);
+  });
+  it("nhận phòng có khoang khác nhau, giữ nguyên sizes", () => {
+    const one = [["CC1", 1, 0, 1, "An", "A", ""]];
+    const r = validatePayload({ title: "T", rooms: [oddRoom], people: one });
+    expect(r.ok && r.value.rooms[0].sizes).toEqual(oddRoom.sizes);
+    // Ô 1-1 có trong khoang 1 (2 hàng) nên bỏ được, dù khoang 2 chỉ có 1 hàng.
+    expect(validatePayload({ title: "T", rooms: [{ ...oddRoom, off: ["1-1"] }], people: one }).ok).toBe(true);
+    // Phòng thường thì không thêm sizes.
+    const plain = validatePayload(good());
+    expect(plain.ok && plain.value.rooms[0]).not.toHaveProperty("sizes");
+  });
+  it("đánh số từng khoang thì giữ order; theo cả phòng là mặc định nên bỏ đi", () => {
+    const one = [["CC1", 1, 0, 1, "An", "A", ""]];
+    const block = validatePayload({ title: "T", rooms: [{ ...room, order: "block" }], people: one });
+    expect(block.ok && block.value.rooms[0].order).toBe("block");
+    const whole = validatePayload({ title: "T", rooms: [{ ...room, order: "room" }], people: one });
+    expect(whole.ok && whole.value.rooms[0]).not.toHaveProperty("order");
   });
   it("cùng số máy nhưng khác ca thì hợp lệ", () => {
     expect(validatePayload({ ...good(), people: [["CC1", 1, 0, 1, "An", "A", ""], ["CC2", 2, 0, 1, "B", "B", ""]] }).ok).toBe(true);
@@ -98,10 +122,32 @@ describe("buildSharePayload / toStored", () => {
     ]);
     expect(validatePayload(p).ok).toBe(true);
     const s = toStored(p, "h", 1000);
-    expect(s.v).toBe(2);
+    expect(s.v).toBe(3);
     expect(s.sessions).toBe(2);
     expect(s.people["CC1"]).toEqual([1, 0, 3, "An", "Sở A", "Kế toán"]);
     expect(s.expiresAt).toBe(1000 + 30 * 86400 * 1000);
+  });
+
+  it("phòng có khoang khác nhau: gửi kèm sizes, số máy tính theo sơ đồ đó", () => {
+    const r1 = newRoom({ id: "x", name: "Phòng 1", ...roomDims([{ rows: 2, cols: 1 }, { rows: 1, cols: 2 }]) });
+    const seats = buildSeats(r1);
+    // Máy 1..3 ở hàng 1, máy 4 ở hàng 2 khoang 1.
+    const p = buildSharePayload([r1], [seats], [[[-1, -1, 0, 1]]], people, units);
+    expect(p.rooms[0].sizes).toEqual([{ rows: 2, cols: 1 }, { rows: 1, cols: 2 }]);
+    expect(p.people.map((x) => x[3])).toEqual([3, 4]);
+    expect(p.rooms[0]).not.toHaveProperty("order");
+    expect(validatePayload(p).ok).toBe(true);
+  });
+
+  it("đánh số từng khoang: gửi kèm order", () => {
+    const r1 = newRoom({ id: "x", name: "Phòng 1", blocks: 2, rows: 2, cols: 1, order: "block", style: "ltr" });
+    const seats = buildSeats(r1);
+    // Máy 1, 2 ở khoang 1; máy 3, 4 ở khoang 2. An ngồi hàng 2 khoang 1, Bình ngồi hàng 1 khoang 2.
+    expect(seats.map((s) => s.key)).toEqual(["0-0", "1-0", "0-1", "1-1"]);
+    const p = buildSharePayload([r1], [seats], [[[-1, 0, 1, -1]]], people, units);
+    expect(p.rooms[0].order).toBe("block");
+    expect(p.people.map((x) => x[3])).toEqual([2, 3]);
+    expect(validatePayload(p).ok).toBe(true);
   });
 
   it("một phòng thì tên kỳ thi là tên phòng", () => {
@@ -114,13 +160,23 @@ describe("parseStored", () => {
   it("đọc bản v1 (một phòng) thành ca 1, phòng đầu tiên", () => {
     const v1 = { v: 1, title: "P1", room, people: { CC1: [5, "An", "Sở A"] }, tokenHash: "h", expiresAt: 9 };
     const s = parseStored(JSON.stringify(v1));
-    expect(s).toMatchObject({ v: 2, title: "P1", rooms: [room], sessions: 1, tokenHash: "h", expiresAt: 9 });
+    expect(s).toMatchObject({ v: 3, title: "P1", rooms: [room], sessions: 1, tokenHash: "h", expiresAt: 9 });
     expect(s?.people["CC1"]).toEqual([1, 0, 5, "An", "Sở A", ""]);
+  });
+  it("đọc bản v2 (chưa có khoang riêng) y nguyên", () => {
+    const v2 = { v: 2, title: "Kỳ thi", rooms: [room], sessions: 2, people: { CC1: [2, 0, 5, "An", "Sở A", "Thuế"] }, tokenHash: "h", expiresAt: 9 };
+    expect(parseStored(JSON.stringify(v2))).toEqual({ ...v2, v: 3 });
+  });
+  it("bản v3 giữ sizes của phòng", () => {
+    const r = validatePayload({ title: "T", rooms: [oddRoom], people: [["CC1", 1, 0, 1, "An", "A", ""]] });
+    if (!r.ok) throw new Error(r.error);
+    expect(parseStored(JSON.stringify(toStored(r.value, "h", 1000)))?.rooms[0].sizes).toEqual(oddRoom.sizes);
   });
   it("bỏ qua dữ liệu hỏng", () => {
     expect(parseStored("{")).toBeNull();
     expect(parseStored(JSON.stringify({ v: 2, people: {}, rooms: [] }))).toBeNull();
     expect(parseStored(JSON.stringify({ v: 3, people: {} }))).toBeNull();
+    expect(parseStored(JSON.stringify({ v: 4, people: {}, rooms: [room] }))).toBeNull();
   });
 });
 

@@ -1,15 +1,27 @@
 export type NumberingStyle = "snake" | "ltr";
+/** Đánh số theo hàng ngang cả phòng, hay hết khoang này mới sang khoang kia. */
+export type NumberingOrder = "room" | "block";
 export type Adjacency = "lr" | "lrfb" | "all";
 export type SpareMode = "tail" | "spread";
 
-/** Cấu hình một phòng thi: các khoang cùng số hàng, số cột. */
+export interface BlockSize {
+  rows: number;
+  cols: number;
+}
+
+/** Cấu hình một phòng thi. Đọc kích thước khoang qua `blockLayout`, đừng đọc thẳng `rows`/`cols`. */
 export interface RoomConfig {
   id: string;
   name: string;
   blocks: number;
+  /** Số hàng, số cột của mỗi khoang khi các khoang giống nhau; có `sizes` thì là số lớn nhất. */
   rows: number;
   cols: number;
+  /** Kích thước riêng từng khoang (từ trái sang, đủ `blocks` phần tử). Không có thì khoang nào cũng `rows` × `cols`. */
+  sizes?: BlockSize[];
   style: NumberingStyle;
+  /** Sơ đồ cũ không có thì là "room". */
+  order?: NumberingOrder;
   start: number;
   /** Các ô bị bỏ máy, khoá dạng "hàng-cộtToànPhòng". */
   off: string[];
@@ -20,7 +32,7 @@ export interface RoomConfig {
 export interface Seat {
   key: string;
   row: number;
-  /** Cột tính trên toàn phòng (0 .. blocks*cols-1). */
+  /** Cột tính trên toàn phòng (0 .. tổng số cột của các khoang - 1). */
   gcol: number;
   block: number;
   col: number;

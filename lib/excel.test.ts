@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
 import { readXlsx, resultXlsx, templateXlsx } from "./excel";
 import { analyzeRows } from "./people";
-import { buildSeats, newRoom } from "./room";
+import { buildSeats, newRoom, roomDims } from "./room";
 import type { Person } from "./types";
 
 describe("file mẫu (.xlsx)", () => {
@@ -104,6 +104,26 @@ describe("file kết quả (.xlsx)", () => {
     expect(list.getRow(1).values).toEqual([undefined, "Ca", "Phòng", "Số máy", "Khoang", "Hàng", "Ghế", "Họ tên", "Mã CC", "Đơn vị", "Lĩnh vực dự kiểm tra"]);
     expect(list.rowCount).toBe(1 + 2 * 2 * 2);
     expect(list.getRow(2).values).toEqual([undefined, 1, "Phòng 1", 1, 1, 1, 1, "An", "CC1", "Sở A", "Kế toán"]);
+  });
+
+  it("khoang khác nhau: mỗi khoang đúng số hàng số cột, cách nhau một cột hẹp", async () => {
+    // Khoang 1: 2 hàng × 1 cột (cột A), lối đi (cột B), khoang 2: 1 hàng × 2 cột (cột C, D).
+    const room = newRoom({ id: "a", name: "P", style: "ltr", ...roomDims([{ rows: 2, cols: 1 }, { rows: 1, cols: 2 }]) });
+    const wb = await open(await resultXlsx([room], [buildSeats(room)], [[[0, 1, -1, 2]]], people));
+    const map = wb.getWorksheet("Sơ đồ")!;
+    const text = (r: number, c: number) => {
+      const v = map.getCell(r, c).value as { richText: { text: string }[] } | null;
+      return v ? v.richText.map((t) => t.text).join("") : null;
+    };
+    expect(text(3, 1)).toContain("An");
+    expect(text(3, 2)).toBeNull();
+    expect(text(3, 3)).toContain("Bình");
+    expect(text(3, 4)).toBe("3\n(trống)");
+    expect(text(4, 1)).toContain("Chi");
+    expect(text(4, 3)).toBeNull();
+    expect(map.getColumn(2).width).toBe(3);
+    expect(map.getColumn(4).width).toBe(22);
+    expect(wb.getWorksheet("Danh sách")!.getRow(5).values).toEqual([undefined, 4, 1, 2, 1, "Chi", "CC3", "Sở A", ""]);
   });
 
   it("một phòng, một ca, không có lĩnh vực: giữ trang Sơ đồ và bỏ các cột thừa", async () => {

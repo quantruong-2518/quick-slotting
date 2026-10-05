@@ -1,6 +1,7 @@
 import type { RawRow } from "./people";
 import type { Person, RoomConfig, Seat } from "./types";
 import { unitColorHex } from "./colors";
+import { blockLayout } from "./room";
 import { slotName } from "./sessions";
 
 // exceljs nặng (~1MB) nên chỉ tải khi người dùng thật sự cần.
@@ -117,37 +118,35 @@ export async function resultXlsx(rooms: RoomConfig[], seatsOf: Seat[][], items: 
       const head = map.getCell(1, 1);
       head.value = `${title}: ${filled} người / ${seats.length} máy`;
       head.font = { bold: true, size: 14 };
-      const bySeatKey = new Map(seats.map((x, i) => [x.key, i]));
-      const width = room.blocks * room.cols + (room.blocks - 1);
-      for (let c = 1; c <= width; c++) map.getColumn(c).width = c % (room.cols + 1) === 0 ? 3 : 22;
-      for (let y = 0; y < room.rows; y++) {
-        const line = map.getRow(y + 3);
-        line.height = hasField ? 80 : 66;
-        for (let g = 0; g < room.blocks * room.cols; g++) {
-          const i = bySeatKey.get(`${y}-${g}`);
-          if (i === undefined) continue;
-          const block = Math.floor(g / room.cols);
-          const cell = line.getCell(g + block + 1);
-          cell.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
-          cell.border = { top: thin, left: thin, bottom: thin, right: thin };
-          const num = String(seats[i].number);
-          if (its[i] < 0) {
-            cell.value = { richText: [{ text: num + "\n", font: { bold: true } }, { text: "(trống)", font: { italic: true, size: 9 } }] };
-            continue;
-          }
-          const p = people[its[i]];
-          cell.value = {
-            richText: [
-              { text: num + "\n", font: { bold: true, size: 12 } },
-              { text: p.name + "\n", font: { bold: true, size: 10 } },
-              { text: p.code + "\n", font: { size: 9 } },
-              { text: p.unit + (p.field ? "\n" : ""), font: { size: 8 } },
-              ...(p.field ? [{ text: p.field, font: { italic: true, size: 8 } }] : []),
-            ],
-          };
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + unitColorHex(p.unitId) } };
+      // Giữa hai khoang chừa một cột hẹp làm lối đi.
+      const layout = blockLayout(room);
+      layout.forEach((b, k) => {
+        for (let c = 0; c < b.cols; c++) map.getColumn(b.start + c + k + 1).width = 22;
+        if (k < layout.length - 1) map.getColumn(b.start + b.cols + k + 1).width = 3;
+      });
+      const rowCount = Math.max(0, ...layout.map((b) => b.rows));
+      for (let y = 0; y < rowCount; y++) map.getRow(y + 3).height = hasField ? 80 : 66;
+      seats.forEach((seat, i) => {
+        const cell = map.getCell(seat.row + 3, seat.gcol + seat.block + 1);
+        cell.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
+        cell.border = { top: thin, left: thin, bottom: thin, right: thin };
+        const num = String(seat.number);
+        if (its[i] < 0) {
+          cell.value = { richText: [{ text: num + "\n", font: { bold: true } }, { text: "(trống)", font: { italic: true, size: 9 } }] };
+          return;
         }
-      }
+        const p = people[its[i]];
+        cell.value = {
+          richText: [
+            { text: num + "\n", font: { bold: true, size: 12 } },
+            { text: p.name + "\n", font: { bold: true, size: 10 } },
+            { text: p.code + "\n", font: { size: 9 } },
+            { text: p.unit + (p.field ? "\n" : ""), font: { size: 8 } },
+            ...(p.field ? [{ text: p.field, font: { italic: true, size: 8 } }] : []),
+          ],
+        };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + unitColorHex(p.unitId) } };
+      });
       map.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
     }),
   );

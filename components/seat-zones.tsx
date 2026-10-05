@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
+import { blockLayout, seatKey } from "@/lib/room";
 import type { RoomConfig, Seat } from "@/lib/types";
 
 /**
  * Vẽ sơ đồ theo khoang: mỗi khoang là một vùng nền màu, các ghế xếp theo hàng bên trong.
+ * Khoang ít hàng hơn thì ngắn hơn, các khoang thẳng hàng ở phía giám thị.
  * renderSeat nhận ghế (hoặc null nếu ô bị bỏ máy) và toạ độ.
  */
 export function SeatZones({
@@ -23,14 +25,12 @@ export function SeatZones({
   onZone?: (block: number) => void;
 }) {
   const byKey = new Map(seats.map((s) => [s.key, s]));
-  const blocks = Array.from({ length: room.blocks }, (_, b) => b);
-  const rows = Array.from({ length: room.rows }, (_, r) => r);
-  const cols = Array.from({ length: room.cols }, (_, c) => c);
+  const range = (n: number) => Array.from({ length: n }, (_, k) => k);
   return (
     <div className="flex flex-col items-center gap-3">
       <div className="grid h-7 w-full place-items-center rounded-control bg-control text-caption font-medium text-muted">Giám thị</div>
       <div className={`flex items-start ${zoneGap}`}>
-        {blocks.map((b) => {
+        {blockLayout(room).map((block, b) => {
           const Zone = onZone ? "button" : "div";
           return (
             <Zone
@@ -38,11 +38,11 @@ export function SeatZones({
               {...(onZone ? { type: "button" as const, onClick: () => onZone(b), "aria-label": `Khoang ${b + 1}` } : {})}
               className={`flex flex-col rounded-card p-2 ${gap} ${zoneClass(b)}`}
             >
-              {rows.map((r) => (
+              {range(block.rows).map((r) => (
                 <span key={r} className={`flex ${gap}`}>
-                  {cols.map((c) => {
-                    const g = b * room.cols + c;
-                    return <span key={c}>{renderSeat(byKey.get(`${r}-${g}`) ?? null, r, g)}</span>;
+                  {range(block.cols).map((c) => {
+                    const g = block.start + c;
+                    return <span key={c}>{renderSeat(byKey.get(seatKey(r, g)) ?? null, r, g)}</span>;
                   })}
                 </span>
               ))}

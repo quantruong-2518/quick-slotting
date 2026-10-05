@@ -6,17 +6,30 @@ import { Card, CheckIcon } from "./ui/card";
 import { NumberStepper } from "./ui/number-stepper";
 import { Segmented } from "./ui/segmented";
 import { SeatZones } from "./seat-zones";
-import { LIMITS, buildSeats, newRoom } from "@/lib/room";
+import { LIMITS, blockLayout, buildSeats, cellCount, newRoom, roomDims } from "@/lib/room";
 import { useSavedRooms } from "@/lib/rooms-store";
 import { MAX_ROOMS } from "@/lib/sessions";
-import type { NumberingStyle, RoomConfig } from "@/lib/types";
+import type { BlockSize, NumberingOrder, NumberingStyle, RoomConfig } from "@/lib/types";
+
+type DraftSize = { rows: number | null; cols: number | null };
 
 export interface Draft {
   blocks: number | null;
   rows: number | null;
   cols: number | null;
+  /** Số hàng, số cột riêng từng khoang; null khi các khoang giống nhau (dùng `rows`, `cols`). */
+  sizes: DraftSize[] | null;
   style: NumberingStyle;
+  order: NumberingOrder;
   start: number;
+}
+
+/** Kích thước từng khoang theo các ô đang nhập; null khi còn thiếu số. */
+function draftSizes(d: Draft): BlockSize[] | null {
+  if (!d.blocks) return null;
+  const list: DraftSize[] = d.sizes ?? Array.from({ length: d.blocks }, () => ({ rows: d.rows, cols: d.cols }));
+  const filled = (b: DraftSize): b is BlockSize => !!b.rows && !!b.cols;
+  return list.length === d.blocks && list.every(filled) ? list : null;
 }
 
 /** Một phòng thi đang soạn: ô nhập kích thước và sơ đồ đã tạo (null khi chưa bấm Tạo sơ đồ). */
@@ -29,7 +42,7 @@ export interface RoomEntry {
 let seq = 0;
 export const newEntry = (): RoomEntry => ({
   key: `p${++seq}`,
-  draft: { blocks: null, rows: null, cols: null, style: "snake", start: 1 },
+  draft: { blocks: null, rows: null, cols: null, sizes: null, style: "snake", order: "room", start: 1 },
   room: null,
 });
 
@@ -120,9 +133,10 @@ function RoomEditor({
   const seats = useMemo(() => (room ? buildSeats(room) : []), [room]);
   const saved = useSavedRooms();
   const [savedFlag, setSavedFlag] = useState(false);
-  const ready = !!(draft.blocks && draft.rows && draft.cols);
-  const total = ready ? draft.blocks! * draft.rows! * draft.cols! : 0;
-  const same = !!room && ready && room.blocks === draft.blocks && room.rows === draft.rows && room.cols === draft.cols;
+  const sizes = draftSizes(draft);
+  const total = sizes ? sizes.reduce((n, b) => n + b.rows * b.cols, 0) : 0;
+  const now = room ? blockLayout(room) : [];
+  const same = !!sizes && now.length === sizes.length && now.every((b, i) => b.rows === sizes[i].rows && b.cols === sizes[i].cols);
   const otherRooms = others.flatMap((e) => (e.room ? [e.room] : []));
   const usedIds = new Set(otherRooms.map((r) => r.id));
   const reserve = room?.reserve ?? 0;
@@ -130,8 +144,10 @@ function RoomEditor({
   const update = (r: RoomConfig) => { onChange({ room: r }); setSavedFlag(false); };
   const patch = (p: Partial<Draft>) => {
     const d = { ...draft, ...p };
-    onChange(room && ("style" in p || "start" in p) ? { draft: d, room: { ...room, style: d.style, start: d.start } } : { draft: d });
-    if (room && ("style" in p || "start" in p)) setSavedFlag(false);
+    // Đổi cách đánh số thì sơ đồ đổi theo ngay, không cần tạo lại.
+    const renumber = !!room && ("style" in p || "order" in p || "start" in p);
+    onChange(renumber ? { draft: d, room: { ...room, style: d.style, order: d.order, start: d.start } } : { draft: d });
+    if (renumber) setSavedFlag(false);
   };
 
   // Tên mặc định chưa trùng với sơ đồ đã lưu hay phòng khác trong kỳ thi.
@@ -143,18 +159,33 @@ function RoomEditor({
   }
 
   function generate() {
-    if (!ready) return;
+    if (!sizes) return;
     update(newRoom({
       id: room?.id, name: room?.name ?? defaultName(),
-      blocks: draft.blocks!, rows: draft.rows!, cols: draft.cols!, style: draft.style, start: draft.start, off: [],
+      ...roomDims(sizes), style: draft.style, order: draft.order, start: draft.start, off: [],
       reserve: Math.min(reserve, Math.max(0, total - 1)),
     }));
   }
 
+  // Đổi số khoang khi đang nhập riêng từng khoang: khoang mới lấy số của khoang cuối; còn 1 khoang thì hết "khác nhau".
+  function setBlocks(v: number | null) {
+    const old = draft.sizes;
+    if (!old || v === null) return patch({ blocks: v });
+    patch({ blocks: v, sizes: v < 2 ? null : Array.from({ length: v }, (_, i) => old[i] ?? old[old.length - 1]) });
+  }
+
+  function setCustom(on: boolean) {
+    patch({ sizes: on ? Array.from({ length: draft.blocks ?? 0 }, () => ({ rows: draft.rows, cols: draft.cols })) : null });
+  }
+
+  const setSize = (i: number, p: Partial<DraftSize>) =>
+    patch({ sizes: draft.sizes!.map((b, k) => (k === i ? { ...b, ...p } : b)) });
+
   function pickSaved(id: string) {
     const r = saved.rooms.find((x) => x.id === id);
     if (!r) return;
-    onChange({ draft: { blocks: r.blocks, rows: r.rows, cols: r.cols, style: r.style, start: r.start }, room: r });
+    const own = r.sizes ? r.sizes.map((b) => ({ ...b })) : null;
+    onChange({ draft: { blocks: r.blocks, rows: r.rows, cols: r.cols, sizes: own, style: r.style, order: r.order ?? "room", start: r.start }, room: r });
     setSavedFlag(true);
   }
 
@@ -168,13 +199,49 @@ function RoomEditor({
     <div className="flex flex-1 gap-4">
       <Card className="flex w-75 shrink-0 flex-col gap-3.5" aria-label="Kích thước phòng">
         <h2 className="mb-1 text-lg font-semibold">Kích thước phòng</h2>
-        <NumberStepper id="blocks" label="Số khoang" value={draft.blocks} max={LIMITS.blocks} onChange={(v) => patch({ blocks: v })} />
-        <NumberStepper id="rows" label="Số hàng" value={draft.rows} max={LIMITS.rows} onChange={(v) => patch({ rows: v })} />
-        <NumberStepper id="cols" label="Số cột / khoang" value={draft.cols} max={LIMITS.cols} onChange={(v) => patch({ cols: v })} />
-        {ready ? (
+        <NumberStepper id="blocks" label="Số khoang" value={draft.blocks} max={LIMITS.blocks} onChange={setBlocks} />
+        {(draft.sizes || (draft.blocks ?? 0) > 1) && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-body font-medium">Số hàng, số cột các khoang</span>
+            <Segmented
+              label="Số hàng, số cột các khoang"
+              value={draft.sizes ? "own" : "same"}
+              onChange={(v) => setCustom(v === "own")}
+              options={[
+                { value: "same", label: "Giống nhau" },
+                { value: "own", label: "Khác nhau", hint: "Nhập số hàng, số cột riêng cho từng khoang" },
+              ]}
+            />
+          </div>
+        )}
+        {draft.sizes ? (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-caption text-muted">
+              <span className="flex-1" />
+              <span className="w-14 text-center">Số hàng</span>
+              <span className="w-14 text-center">Số cột</span>
+            </div>
+            {draft.sizes.map((b, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="flex-1 text-body font-medium">Khoang {i + 1}</span>
+                <SizeInput label={`Số hàng khoang ${i + 1}`} value={b.rows} max={LIMITS.rows} onChange={(v) => setSize(i, { rows: v })} />
+                <SizeInput label={`Số cột khoang ${i + 1}`} value={b.cols} max={LIMITS.cols} onChange={(v) => setSize(i, { cols: v })} />
+              </div>
+            ))}
+            <p className="text-caption text-faint">Khoang 1 là khoang ngoài cùng bên trái.</p>
+          </div>
+        ) : (
+          <>
+            <NumberStepper id="rows" label="Số hàng" value={draft.rows} max={LIMITS.rows} onChange={(v) => patch({ rows: v })} />
+            <NumberStepper id="cols" label="Số cột / khoang" value={draft.cols} max={LIMITS.cols} onChange={(v) => patch({ cols: v })} />
+          </>
+        )}
+        {sizes ? (
           <>
             <div className="mt-1.5 flex items-baseline justify-between tabular-nums">
-              <span className="text-sm text-muted">{draft.blocks} × {draft.rows} × {draft.cols} =</span>
+              <span className="text-sm text-muted">
+                {draft.sizes ? "Tổng cộng" : `${draft.blocks} × ${draft.rows} × ${draft.cols} =`}
+              </span>
               <span className="text-title font-semibold">{total} máy</span>
             </div>
             <Button variant={same ? "secondary" : "primary"} className="h-11" onClick={generate}>
@@ -183,7 +250,9 @@ function RoomEditor({
           </>
         ) : (
           <>
-            <p className="mt-1.5 text-sm text-warn">Nhập đủ 3 số để tạo sơ đồ.</p>
+            <p className="mt-1.5 text-sm text-warn">
+              {!draft.sizes ? "Nhập đủ 3 số để tạo sơ đồ." : draft.blocks ? "Nhập đủ số hàng, số cột của từng khoang." : "Nhập số khoang để tạo sơ đồ."}
+            </p>
             <Button className="h-11" disabled>Tạo sơ đồ</Button>
           </>
         )}
@@ -200,6 +269,20 @@ function RoomEditor({
             ]}
           />
         </div>
+        {(draft.blocks ?? 0) > 1 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-body font-medium">Đánh số theo</span>
+            <Segmented
+              label="Đánh số theo"
+              value={draft.order}
+              onChange={(v) => patch({ order: v })}
+              options={[
+                { value: "room", label: "Cả phòng", hint: "Đánh số theo hàng ngang, qua hết các khoang rồi mới xuống hàng" },
+                { value: "block", label: "Từng khoang", hint: "Đánh số hết khoang này mới sang khoang kia" },
+              ]}
+            />
+          </div>
+        )}
         <div className="flex items-center justify-between gap-3">
           <label htmlFor="start" className="text-body font-medium">Bắt đầu từ số</label>
           <input
@@ -254,7 +337,7 @@ function RoomEditor({
               <option value="">{saved.rooms.length ? "Chọn sơ đồ…" : "Chưa có sơ đồ nào"}</option>
               {saved.rooms.map((r) => (
                 <option key={r.id} value={r.id} disabled={usedIds.has(r.id)}>
-                  {r.name} ({r.blocks * r.rows * r.cols - r.off.length} máy){usedIds.has(r.id) ? " · đã chọn" : ""}
+                  {r.name} ({cellCount(r) - r.off.length} máy){usedIds.has(r.id) ? " · đã chọn" : ""}
                 </option>
               ))}
             </select>
@@ -304,5 +387,29 @@ function RoomEditor({
         )}
       </Card>
     </div>
+  );
+}
+
+/** Ô số gọn cho bảng kích thước từng khoang (không có nút −/+ vì hai ô nằm cạnh nhau). */
+function SizeInput({
+  label, value, max, onChange,
+}: {
+  label: string;
+  value: number | null;
+  max: number;
+  onChange: (v: number | null) => void;
+}) {
+  return (
+    <input
+      aria-label={label}
+      inputMode="numeric"
+      placeholder="–"
+      value={value ?? ""}
+      onChange={(e) => {
+        const raw = e.target.value.replace(/\D/g, "");
+        onChange(raw ? Math.min(max, Math.max(1, parseInt(raw, 10))) : null);
+      }}
+      className="field h-10 w-14 text-center text-lg font-semibold"
+    />
   );
 }
