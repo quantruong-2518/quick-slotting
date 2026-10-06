@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { DndContext, DragOverlay, PointerSensor, pointerWithin, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { snapCenterToCursor } from "@dnd-kit/modifiers";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { Card, CheckIcon, DownloadIcon, Notice, Pill } from "./ui/card";
 import { NumberStepper } from "./ui/number-stepper";
@@ -9,6 +11,8 @@ import { SeatZones } from "./seat-zones";
 import { EditableName } from "./ui/editable-name";
 import { ExportDialog } from "./export-dialog";
 import { MoveDialog } from "./move-dialog";
+import { SwapDialog } from "./swap-dialog";
+import { DraggableSeat, SeatGhost } from "./draggable-seat";
 import { ShareDialog } from "./share-dialog";
 import { unitColor } from "@/lib/colors";
 import { downloadBlob, excelFiles, resultXlsx, type ExcelFile } from "@/lib/excel";
@@ -55,6 +59,7 @@ export function ResultStep({
   const [zoneSel, setZone] = useState(0);
   const [query, setQuery] = useState("");
   const [moving, setMoving] = useState<SeatRef | null>(null);
+  const [swap, setSwap] = useState<[SeatRef, SeatRef] | null>(null);
   const key = shareKey(rooms.map((r) => r.id));
   const [share, setShare] = useState<SavedShare | null>(() => loadShare(key));
   const [dialog, setDialog] = useState(false);
@@ -69,6 +74,43 @@ export function ResultStep({
   const seats = seatsOf[cur.r];
   const zone = Math.min(zoneSel, room.blocks - 1);
   const slot = result?.slots[cur.s]?.[cur.r] ?? null;
+  const [activeSeat, setActiveSeat] = useState<number | null>(null);
+  // Ô đang rê tới; giữ nguyên sau khi thả để biết là thả vào ô khác hay thả ra ngoài.
+  const [overSeat, setOverSeat] = useState<number | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  function dragEnd({ active, over }: DragEndEvent) {
+    setActiveSeat(null);
+    if (over && over.id !== active.id) setSwap([{ ...cur, i: Number(active.id) }, { ...cur, i: Number(over.id) }]);
+  }
+  // Hai ô đổi chỗ thì trượt về vị trí của nhau (FLIP): ghi vị trí lúc xác nhận, trượt sau khi sơ đồ đã đổi.
+  const seatEls = useRef(new Map<number, HTMLElement>());
+  const flip = useRef<{ i: number; dx: number; dy: number }[] | null>(null);
+  function confirmSwap([a, b]: [SeatRef, SeatRef]) {
+    const ra = seatEls.current.get(a.i)?.getBoundingClientRect();
+    const rb = seatEls.current.get(b.i)?.getBoundingClientRect();
+    if (ra && rb) {
+      flip.current = [
+        { i: a.i, dx: rb.left - ra.left, dy: rb.top - ra.top },
+        { i: b.i, dx: ra.left - rb.left, dy: ra.top - rb.top },
+      ];
+    }
+    onMove(a, b);
+    setSwap(null);
+  }
+  useLayoutEffect(() => {
+    const moves = flip.current;
+    flip.current = null;
+    if (!moves || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    for (const { i, dx, dy } of moves) {
+      const el = seatEls.current.get(i);
+      if (!el) continue;
+      el.style.zIndex = "20";
+      el.animate(
+        [{ transform: `translate(${dx}px, ${dy}px) scale(1.2)` }, { transform: "translate(0, 0) scale(1)" }],
+        { duration: 380, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+      ).finished.then(() => { el.style.zIndex = ""; }, () => { el.style.zIndex = ""; });
+    }
+  }, [result]);
   const indexOf = useMemo(() => new Map(seats.map((s, i) => [s.key, i])), [seats]);
   const hasField = people.some((p) => p.field);
   const totalSeats = seatsOf.reduce((n, x) => n + x.length, 0);
@@ -143,43 +185,22 @@ export function ResultStep({
   return (
     <>
       <Card className="flex flex-1 flex-col gap-4" aria-label="Kết quả xếp chỗ">
-        <div className="flex flex-wrap items-center gap-3">
-          <h2 className="mr-2 text-lg font-semibold">Kết quả</h2>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h2 className="mr-2 text-lg font-semibold">Kết quả xếp chỗ</h2>
           <Pill><b className="font-semibold">{people.length}</b> người</Pill>
           {R > 1 || S > 1 ? (
-            <Pill><b className="font-semibold">{S}</b> ca × <b className="font-semibold">{R}</b> phòng</Pill>
+            <Pill><b className="font-semibold">{S}</b> ca · <b className="font-semibold">{R}</b> phòng</Pill>
           ) : (
             <Pill><b className="font-semibold">{people.length}/{totalSeats}</b> máy</Pill>
           )}
           {result && !running &&
             (conflicts === 0 ? (
-              <Pill tone="ok"><CheckIcon className="size-3.5" /> 0 cặp cùng ĐV ngồi cạnh</Pill>
+              <Pill tone="ok"><CheckIcon className="size-3.5" /> Không ai ngồi cạnh người cùng ĐV</Pill>
             ) : (
-              <Pill tone="warn">Còn {conflicts} cặp cùng ĐV ngồi cạnh</Pill>
+              <Pill tone="warn">Còn {conflicts} cặp cùng ĐV ngồi cạnh nhau</Pill>
             ))}
           {running && <Pill>Đang xếp…{progress.total > 1 ? ` ${progress.done}/${progress.total} phòng` : ""}</Pill>}
           <span className="flex-1" />
-          <Segmented
-            label="Tính ngồi cạnh nhau"
-            value={adj}
-            onChange={onAdj}
-            options={[
-              { value: "lr", label: "Cạnh: Trái-phải", hint: "Chỉ tính hai người liền nhau trong cùng hàng, cùng khoang" },
-              { value: "lrfb", label: "+ Trước-sau" },
-              { value: "all", label: "+ Chéo" },
-            ]}
-          />
-          {S * totalSeats > people.length && (
-            <Segmented
-              label="Máy trống"
-              value={spare}
-              onChange={onSpare}
-              options={[
-                { value: "tail", label: "Trống cuối", hint: "Để trống các máy số lớn nhất (máy dự phòng nằm ở cuối)" },
-                { value: "spread", label: "Trống rải", hint: "Chỗ trống xen kẽ, dễ xếp hơn khi có đơn vị đông" },
-              ]}
-            />
-          )}
           <Button onClick={onRerun} disabled={running}>
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="size-4">
               <path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 2.5v3h-3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
@@ -188,75 +209,115 @@ export function ResultStep({
           </Button>
         </div>
 
-        <div className={`flex items-start gap-6 rounded-card bg-subtle p-4 ${result && S * R > 1 ? "" : "self-start"}`}>
-          <div className="flex w-60 shrink-0 flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-card bg-subtle px-4 py-3">
+          <div className="flex items-center gap-3" title={minSessions > 1 ? `Cần ít nhất ${minSessions} ca mới đủ chỗ` : "Tăng số ca nếu muốn mỗi phòng đỡ đông"}>
             <NumberStepper
               id="sessions"
-              label="Số ca"
+              label="Số ca thi"
               value={sessions}
               min={minSessions}
               max={MAX_SESSIONS}
               readOnly
               onChange={(v) => v && v !== sessions && !running && onSessions(v)}
             />
-            <p className="text-caption text-muted">
-              {minSessions > 1
-                ? `Cần ít nhất ${minSessions} ca. Người được chia đều các ca, mỗi ĐV rải đều các phòng.`
-                : "Thêm ca nếu muốn mỗi phòng ít người hơn."}
-            </p>
+            {minSessions > 1 && <span className="text-caption text-muted">tối thiểu {minSessions}</span>}
           </div>
-          {result && S * R > 1 && (
-            <div className="min-w-0 flex-1 overflow-x-auto">
-              <table className="border-separate border-spacing-1.5 text-body">
-                <thead>
-                  <tr>
-                    <th />
-                    {rooms.map((rm, r) => (
-                      <th key={rm.id} className="px-1 text-left align-bottom font-medium">
-                        <span className="block font-semibold">{rm.name}</span>
-                        <span className="block text-caption font-normal text-muted">
-                          {capacityOf(seatsOf[r].length, rm.reserve)} chỗ{rm.reserve ? ` + ${rm.reserve} dự phòng` : ""}
-                        </span>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.slots.map((row, s) => (
-                    <tr key={s}>
-                      <th scope="row" className="pr-2 text-left font-semibold whitespace-nowrap">Ca {s + 1}</th>
-                      {row.map((x, r) => {
-                        const on = s === cur.s && r === cur.r;
-                        return (
-                          <td key={r}>
-                            <button
-                              type="button"
-                              aria-pressed={on}
-                              aria-label={`${slotName(s, rooms[r].name, S)}: ${x.items.filter((p) => p >= 0).length} người`}
-                              onClick={() => setSel({ s, r })}
-                              className={`flex h-11 w-full min-w-32 items-center justify-between gap-3 rounded-control px-3 ${
-                                on ? "bg-white font-semibold ring-2 ring-brand" : "bg-white/60 hover:bg-white"
-                              }`}
-                            >
-                              <span className="tabular-nums">{x.items.filter((p) => p >= 0).length} người</span>
-                              {x.conflictPairs ? (
-                                <span className="text-caption font-semibold text-warn">{x.conflictPairs} cặp</span>
-                              ) : (
-                                <CheckIcon className="size-4 text-ok" />
-                              )}
-                            </button>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="flex items-center gap-3">
+            <span className="text-body font-medium">Tính là ngồi cạnh nhau</span>
+            <Segmented
+              label="Tính ngồi cạnh nhau"
+              value={adj}
+              onChange={onAdj}
+              options={[
+                { value: "lr", label: "Trái - phải", hint: "Chỉ tính hai người liền nhau trong cùng hàng, cùng khoang" },
+                { value: "lrfb", label: "Thêm trước - sau", hint: "Tính cả người ngồi ngay trước và ngay sau" },
+                { value: "all", label: "Thêm chéo", hint: "Tính cả người ngồi chéo" },
+              ]}
+            />
+          </div>
+          {S * totalSeats > people.length && (
+            <div className="flex items-center gap-3">
+              <span className="text-body font-medium">Máy để trống</span>
+              <Segmented
+                label="Máy trống"
+                value={spare}
+                onChange={onSpare}
+                options={[
+                  { value: "tail", label: "Dồn cuối phòng", hint: "Để trống các máy số lớn nhất (máy dự phòng nằm ở cuối)" },
+                  { value: "spread", label: "Rải xen kẽ", hint: "Chỗ trống xen kẽ giữa các máy, dễ xếp hơn khi có đơn vị đông" },
+                ]}
+              />
             </div>
           )}
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
+        {result && S * R > 1 && (
+          <div className="flex flex-col gap-2">
+            {R > 1 && <span className="text-body font-medium">Chọn ca, phòng để xem</span>}
+            {R === 1 ? (
+              <Segmented
+                label="Chọn ca"
+                value={String(cur.s)}
+                onChange={(v) => setSel({ s: Number(v), r: 0 })}
+                options={result.slots.map((row, s) => ({
+                  value: String(s),
+                  label: `Ca ${s + 1} · ${row[0].items.filter((p) => p >= 0).length} người${row[0].conflictPairs ? ` · ${row[0].conflictPairs} cặp trùng` : ""}`,
+                }))}
+              />
+) : (
+              <div className="overflow-x-auto rounded-card bg-subtle p-2">
+                <table className="border-separate border-spacing-1.5 text-body">
+                  <thead>
+                    <tr>
+                      <th />
+                      {rooms.map((rm, r) => (
+                        <th key={rm.id} className="px-1 text-left align-bottom font-medium">
+                          <span className="block font-semibold">{rm.name}</span>
+                          <span className="block text-caption font-normal text-muted">
+                            {capacityOf(seatsOf[r].length, rm.reserve)} chỗ mỗi ca{rm.reserve ? ` + ${rm.reserve} dự phòng` : ""}
+                          </span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.slots.map((row, s) => (
+                      <tr key={s}>
+                        <th scope="row" className="pr-2 text-left font-semibold whitespace-nowrap">Ca {s + 1}</th>
+                        {row.map((x, r) => {
+                          const on = s === cur.s && r === cur.r;
+                          return (
+                            <td key={r}>
+                              <button
+                                type="button"
+                                aria-pressed={on}
+                                aria-label={`${slotName(s, rooms[r].name, S)}: ${x.items.filter((p) => p >= 0).length} người`}
+                                onClick={() => setSel({ s, r })}
+                                className={`flex h-11 w-full min-w-32 items-center justify-between gap-3 rounded-control px-3 ${
+                                  on ? "bg-white font-semibold ring-2 ring-brand" : "bg-white/60 hover:bg-white"
+                                }`}
+                              >
+                                <span className="tabular-nums">{x.items.filter((p) => p >= 0).length} người</span>
+                                {x.conflictPairs ? (
+                                  <span className="text-caption font-semibold text-warn">{x.conflictPairs} cặp</span>
+                                ) : (
+                                  <CheckIcon className="size-4 text-ok" />
+                                )}
+                              </button>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-sm text-muted">Màu theo đơn vị:</span>
           {units.map((u) => (
             <span key={u.id} className="inline-flex h-8 items-center gap-2 rounded-chip bg-subtle px-2.5 text-sm">
               <span className="size-3 rounded-sm" style={{ background: unitColor(u.id) }} />
@@ -266,7 +327,7 @@ export function ResultStep({
           ))}
         </div>
 
-        <div className="flex items-baseline justify-between gap-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t border-line pt-4">
           <h3 className="flex min-w-0 items-center gap-1.5 text-lg font-semibold">
             {S > 1 && <span className="shrink-0">Ca {cur.s + 1} ·</span>}
             <EditableName key={room.id} value={room.name} label="Đổi tên phòng" onChange={(name) => onRename(cur.r, name)} />
@@ -279,7 +340,6 @@ export function ResultStep({
             </span>
           )}
         </div>
-
         {slot && slot.conflictPairs > 0 && slot.capacityIssues.length > 0 && (
           <Notice tone="warn">
             {slot.capacityIssues.map((c) => `${units[c.unitId].name} có ${c.count} người trong phòng này, chỉ xếp được tối đa ${c.max} người không ngồi cạnh nhau`).join(". ")}.
@@ -289,6 +349,14 @@ export function ResultStep({
 
         <div className={`overflow-auto rounded-card bg-subtle p-5 ${running ? "opacity-50" : ""}`}>
           {slot ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={pointerWithin}
+              onDragStart={(e) => { setActiveSeat(Number(e.active.id)); setOverSeat(null); }}
+              onDragOver={(e) => setOverSeat(e.over ? Number(e.over.id) : null)}
+              onDragEnd={dragEnd}
+              onDragCancel={() => setActiveSeat(null)}
+            >
             <div className="mx-auto w-fit">
               <SeatZones
                 room={room}
@@ -301,24 +369,30 @@ export function ResultStep({
                   const p = slot.items[i] >= 0 ? people[slot.items[i]] : null;
                   const bad = slot.conflictSeats.has(i);
                   return (
-                    <span
-                      title={
-                        p
-                          ? `Máy ${seat.number}: ${p.name} (${p.code}), ${units[p.unitId].name}${p.field ? `, ${p.field}` : ""}`
-                          : `Máy ${seat.number}: trống`
-                      }
-                      className={`grid h-10 w-11 place-items-center rounded-control text-sm font-semibold tabular-nums ${
-                        p ? "text-ink" : "bg-subtle text-faint"
-                      } ${bad ? "ring-2 ring-danger" : ""}`}
-                      style={p ? { background: unitColor(p.unitId) } : undefined}
-                    >
-                      {seat.number}
-                    </span>
+                    <DraggableSeat
+                      id={i}
+                      number={seat.number}
+                      color={p ? unitColor(p.unitId) : null}
+                      title={p ? `Máy ${seat.number}: ${p.name} (${p.code}), ${units[p.unitId].name}${p.field ? `, ${p.field}` : ""}` : ""}
+                      bad={bad}
+                      busy={activeSeat !== null}
+                      canDrag={!!p && !running}
+                      elRef={(el) => { if (el) seatEls.current.set(i, el); else seatEls.current.delete(i); }}
+                    />
                   );
                 }}
               />
-              <p className="mt-3 text-center text-caption text-faint">Bấm vào một khoang để xem danh sách bên dưới</p>
+              <p className="mt-3 text-center text-sm text-muted">
+                Muốn hai người đổi chỗ: <b className="font-semibold text-ink">kéo số máy này thả vào số máy kia</b>. Bấm vào khoang để xem danh sách bên dưới.
+              </p>
             </div>
+              {/* Thả vào ô khác thì hộp xác nhận hiện ngay; thả ra ngoài hay Esc thì ô bay về chỗ cũ. */}
+              <DragOverlay modifiers={[snapCenterToCursor]} dropAnimation={overSeat !== null ? null : undefined}>
+                {activeSeat !== null && slot && slot.items[activeSeat] >= 0 && (
+                  <SeatGhost number={seats[activeSeat].number} color={unitColor(people[slot.items[activeSeat]].unitId)} />
+                )}
+              </DragOverlay>
+            </DndContext>
           ) : (
             <p className="py-16 text-center text-muted">Đang xếp…</p>
           )}
@@ -326,7 +400,7 @@ export function ResultStep({
 
         <section aria-label="Danh sách chỗ ngồi" className="flex flex-col overflow-hidden rounded-card bg-subtle">
           <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3">
-            <span className="font-semibold">{hits ? `Tìm thấy ${hits.length}${hits.length === MAX_HITS ? "+" : ""} người` : `Khoang ${zone + 1}`}</span>
+            <span className="font-semibold">{hits ? `Tìm thấy ${hits.length}${hits.length === MAX_HITS ? "+" : ""} người` : `Danh sách khoang ${zone + 1}`}</span>
             {!hits && (
               <span className="text-caption text-muted">
                 {zoneRows.filter((x) => x.p >= 0).length} người / {zoneRows.length} máy
@@ -431,6 +505,20 @@ export function ResultStep({
           place={place}
           onMove={(to) => { onMove(moving, to); setMoving(null); show(to); }}
           onClose={() => setMoving(null)}
+        />
+      )}
+      {swap && items && (
+        <SwapDialog
+          a={swap[0]}
+          b={swap[1]}
+          items={items}
+          nbOf={nbOf}
+          people={people}
+          units={units}
+          seatNo={(at) => seatsOf[at.r][at.i].number}
+          place={place}
+          onConfirm={() => confirmSwap(swap)}
+          onClose={() => setSwap(null)}
         />
       )}
       {exporting && (
