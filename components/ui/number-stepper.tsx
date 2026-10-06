@@ -7,6 +7,7 @@ export function NumberStepper({
   min = 1,
   max,
   readOnly = false,
+  stacked = false,
   onChange,
 }: {
   id: string;
@@ -16,13 +17,15 @@ export function NumberStepper({
   max: number;
   /** Chỉ đổi bằng nút −/+ (dùng khi mỗi lần đổi là chạy lại việc nặng). */
   readOnly?: boolean;
+  /** Nhãn nhỏ nằm trên ô nhập (dùng khi xếp cạnh các nhóm lựa chọn khác). Mặc định nhãn nằm bên trái. */
+  stacked?: boolean;
   onChange: (v: number | null) => void;
 }) {
   const clamp = (n: number) => Math.min(max, Math.max(min, n));
   const btn = "grid size-10 place-items-center rounded-control bg-control text-xl leading-none hover:bg-control-hover";
   return (
-    <div className="flex items-center justify-between gap-3">
-      <label htmlFor={id} className="text-body font-medium">
+    <div className={stacked ? "flex flex-col gap-2" : "flex items-center justify-between gap-3"}>
+      <label htmlFor={id} className={stacked ? "text-caption font-medium text-muted" : "text-body font-medium"}>
         {label}
       </label>
       <div className="flex gap-1">

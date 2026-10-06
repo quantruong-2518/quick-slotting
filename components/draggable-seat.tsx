@@ -30,8 +30,8 @@ export function DraggableSeat({
       ref={(el) => { drag.setNodeRef(el); drop.setNodeRef(el); elRef(el); }}
       {...drag.listeners}
       title={filled ? `${title}\nKéo thả vào máy khác để đổi chỗ` : `Máy ${number}: trống`}
-      className={`grid h-10 w-11 place-items-center rounded-control text-sm font-semibold tabular-nums transition duration-150 select-none ${
-        filled ? "text-ink" : "bg-subtle text-faint"
+      className={`grid h-10 w-11 place-items-center rounded-control text-body tabular-nums transition duration-150 select-none ${
+        filled ? "font-semibold text-ink" : "bg-subtle font-medium text-faint"
       } ${bad && !busy ? "ring-2 ring-danger" : ""} ${canDrag ? "touch-none cursor-grab" : ""} ${
         isSource ? "scale-90 opacity-30" : ""
       } ${isOver ? "z-10 scale-125 shadow-lifted ring-2 ring-brand animate-hover-target" : ""} ${
@@ -48,7 +48,7 @@ export function DraggableSeat({
 export function SeatGhost({ number, color }: { number: number; color: string }) {
   return (
     <span
-      className="grid h-10 w-11 animate-pickup scale-130 cursor-grabbing place-items-center rounded-control text-sm font-semibold text-ink shadow-lifted ring-2 ring-brand tabular-nums"
+      className="grid h-10 w-11 animate-pickup scale-130 cursor-grabbing place-items-center rounded-control text-body font-semibold text-ink shadow-lifted ring-2 ring-brand tabular-nums"
       style={{ background: color }}
     >
       {number}

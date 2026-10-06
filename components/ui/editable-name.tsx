@@ -6,8 +6,16 @@ import { EditIcon } from "./card";
 /**
  * Tên sửa được: bấm vào tên hoặc biểu tượng bút để gõ tên mới.
  * Enter hoặc bấm ra ngoài để lưu, Esc để bỏ. Cỡ chữ lấy theo phần tử bao ngoài.
+ * iconOnly: chỉ hiện biểu tượng bút (khi tên đã hiện ở chỗ khác, vd trên thanh chọn phòng).
  */
-export function EditableName({ value, label, onChange }: { value: string; label: string; onChange: (name: string) => void }) {
+export function EditableName({
+  value, label, iconOnly = false, onChange,
+}: {
+  value: string;
+  label: string;
+  iconOnly?: boolean;
+  onChange: (name: string) => void;
+}) {
   const [draft, setDraft] = useState<string | null>(null);
   const cancelled = useRef(false);
 
@@ -20,8 +28,8 @@ export function EditableName({ value, label, onChange }: { value: string; label:
         onClick={() => { cancelled.current = false; setDraft(value); }}
         className="group inline-flex min-w-0 items-center gap-2 rounded-chip text-left"
       >
-        <span className="truncate">{value}</span>
-        <span className="grid size-7 shrink-0 place-items-center rounded-chip bg-control text-muted group-hover:bg-control-hover group-hover:text-ink">
+        {!iconOnly && <span className="truncate">{value}</span>}
+        <span className="grid size-8 shrink-0 place-items-center rounded-chip bg-control text-muted group-hover:bg-control-hover group-hover:text-ink">
           <EditIcon />
         </span>
       </button>
@@ -47,7 +55,7 @@ export function EditableName({ value, label, onChange }: { value: string; label:
         if (e.key === "Escape") cancelled.current = true;
         if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur();
       }}
-      className="field h-9 w-64 px-2"
+      className="field h-10 w-64 px-3 text-body font-normal"
     />
   );
 }

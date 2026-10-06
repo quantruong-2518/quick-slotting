@@ -9,6 +9,16 @@ const vietnam = Be_Vietnam_Pro({
   display: "swap",
 });
 
+// Chữ nghiêng chỉ dùng cho vài dòng chú thích nên tách riêng và không preload.
+const vietnamItalic = Be_Vietnam_Pro({
+  variable: "--font-vietnam-italic",
+  subsets: ["latin", "vietnamese"],
+  weight: ["400"],
+  style: "italic",
+  display: "swap",
+  preload: false,
+});
+
 const code = JetBrains_Mono({
   variable: "--font-code",
   subsets: ["latin"],
@@ -30,7 +40,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="vi" className={`${vietnam.variable} ${code.variable} h-full`}>
+    <html lang="vi" className={`${vietnam.variable} ${vietnamItalic.variable} ${code.variable} h-full`}>
       <body className="min-h-full font-sans">{children}</body>
     </html>
   );

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildNeighbors, buildSeats, newRoom } from "./room";
+import { buildNeighbors, buildSeats, newRoom, seatRanges } from "./room";
 import { arrange, evaluate, seededRng } from "./seating";
 import {
-  capacityOf, distribute, minSessions, planCounts, sameUnitNeighbors, slotName, suggestSeat, swapSeats,
+  capacityOf, distribute, minSessions, nextConflictSlot, planCounts, sameUnitNeighbors, slotName, suggestSeat, swapSeats,
 } from "./sessions";
 
 function makeUnits(sizes: number[]) {
@@ -150,4 +150,30 @@ describe("đổi chỗ bằng tay", () => {
 it("tên ô: có nhiều ca thì ghi Ca", () => {
   expect(slotName(1, "Phòng máy 1", 3)).toBe("Ca 2 · Phòng máy 1");
   expect(slotName(0, "Phòng máy 1", 1)).toBe("Phòng máy 1");
+});
+
+describe("tới ô còn cặp trùng kế tiếp", () => {
+  const pairs = [
+    [0, 2, 0],
+    [0, 0, 1],
+  ];
+  it("tìm từ sau ô đang xem, theo thứ tự ca rồi phòng", () => {
+    expect(nextConflictSlot(pairs, { s: 0, r: 0 })).toEqual({ s: 0, r: 1 });
+    expect(nextConflictSlot(pairs, { s: 0, r: 1 })).toEqual({ s: 1, r: 2 });
+  });
+  it("hết thì quay vòng về đầu", () => {
+    expect(nextConflictSlot(pairs, { s: 1, r: 2 })).toEqual({ s: 0, r: 1 });
+  });
+  it("chỉ còn đúng ô đang xem thì trả lại ô đó; không còn ô nào thì null", () => {
+    expect(nextConflictSlot([[0, 3]], { s: 0, r: 1 })).toEqual({ s: 0, r: 1 });
+    expect(nextConflictSlot([[0, 0]], { s: 0, r: 0 })).toBeNull();
+    expect(nextConflictSlot([], { s: 0, r: 0 })).toBeNull();
+  });
+});
+
+it("ghi gọn dãy số máy: từ 3 số liền nhau thì gộp thành khoảng", () => {
+  expect(seatRanges([21, 19, 20])).toBe("19–21");
+  expect(seatRanges([5, 19, 20, 21, 30, 31])).toBe("5, 19–21, 30, 31");
+  expect(seatRanges([7])).toBe("7");
+  expect(seatRanges([])).toBe("");
 });

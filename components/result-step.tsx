@@ -4,7 +4,7 @@ import { DndContext, DragOverlay, PointerSensor, pointerWithin, useSensor, useSe
 import { snapCenterToCursor } from "@dnd-kit/modifiers";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./ui/button";
-import { Card, CheckIcon, DownloadIcon, Notice, Pill } from "./ui/card";
+import { Card, CheckIcon, ChevronIcon, DownloadIcon, Notice, Pill, SearchIcon, SlidersIcon, WarnIcon } from "./ui/card";
 import { NumberStepper } from "./ui/number-stepper";
 import { Segmented } from "./ui/segmented";
 import { SeatZones } from "./seat-zones";
@@ -17,8 +17,9 @@ import { ShareDialog } from "./share-dialog";
 import { unitColor } from "@/lib/colors";
 import { downloadBlob, excelFiles, resultXlsx, type ExcelFile } from "@/lib/excel";
 import { norm, normalizeCode } from "@/lib/people";
+import { seatRanges } from "@/lib/room";
 import { buildSharePayload } from "@/lib/room-share";
-import { MAX_SESSIONS, capacityOf, slotName } from "@/lib/sessions";
+import { MAX_SESSIONS, nextConflictSlot, slotName } from "@/lib/sessions";
 import { fingerprint, loadShare, publishRoom, shareKey, type SavedShare } from "@/lib/share-client";
 import type { Adjacency, Person, RoomConfig, Seat, SeatRef, SlotResult, SpareMode, Unit } from "@/lib/types";
 
@@ -29,6 +30,47 @@ export interface Plan {
 }
 
 const MAX_HITS = 50;
+/** Tới chừng này lựa chọn thì ca/phòng còn hiện thành thanh chọn; nhiều hơn thì dùng ô chọn thả xuống. */
+const MAX_TABS = 6;
+const TH = "bg-subtle px-3 font-medium first:rounded-l-control last:rounded-r-control";
+/** Lời cho trình đọc màn hình khi kéo thả (mặc định của dnd-kit là tiếng Anh). */
+const DRAG_A11Y = {
+  screenReaderInstructions: { draggable: "Kéo số máy này thả vào số máy khác để hai người đổi chỗ, hoặc dùng nút Đổi chỗ trong danh sách." },
+  announcements: {
+    onDragStart: () => "Đang kéo một số máy.",
+    onDragOver: ({ over }: { over: unknown }) => (over ? "Đang ở trên một máy có người, thả ra để đổi chỗ." : "Chưa ở trên máy nào."),
+    onDragEnd: ({ over }: { over: unknown }) => (over ? "Đã thả, chờ xác nhận đổi chỗ." : "Đã bỏ, không đổi chỗ."),
+    onDragCancel: () => "Đã bỏ, không đổi chỗ.",
+  },
+};
+
+/** Chọn ca hoặc phòng đang xem. alert = ô sẽ tới còn cặp cùng ĐV ngồi cạnh nhau. */
+function SlotPicker({
+  label, value, options, onChange,
+}: {
+  label: string;
+  value: number;
+  options: { label: string; alert: boolean }[];
+  onChange: (v: number) => void;
+}) {
+  if (options.length <= MAX_TABS) {
+    return (
+      <Segmented
+        label={label}
+        value={String(value)}
+        onChange={(v) => onChange(Number(v))}
+        options={options.map((o, i) => ({ value: String(i), label: o.label, alert: o.alert ? "có cặp trùng" : undefined }))}
+      />
+    );
+  }
+  return (
+    <select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="field h-10 px-3 text-body">
+      {options.map((o, i) => (
+        <option key={i} value={i}>{o.label}{o.alert ? " (có cặp trùng)" : ""}</option>
+      ))}
+    </select>
+  );
+}
 
 export function ResultStep({
   rooms, seatsOf, nbOf, people, units, result, progress, adj, spare, sessions, minSessions,
@@ -66,6 +108,7 @@ export function ResultStep({
   const [sharing, setSharing] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [options, setOptions] = useState(false);
 
   const S = result?.slots.length ?? sessions;
   const R = rooms.length;
@@ -138,6 +181,8 @@ export function ResultStep({
   }, [q, people, where]);
 
   const zoneRows = slot ? seats.flatMap((s, i) => (s.block === zone ? [{ at: { ...cur, i }, p: slot.items[i] }] : [])) : [];
+  const zonePeople = zoneRows.filter((x) => x.p >= 0);
+  const zoneEmpty = zoneRows.filter((x) => x.p < 0).map((x) => seats[x.at.i].number);
   const filled = slot ? slot.items.filter((x) => x >= 0).length : 0;
   const reserve = room.reserve ?? 0;
 
@@ -180,290 +225,300 @@ export function ResultStep({
     setQuery("");
   }
 
+  /** Nhảy tới ô (ca, phòng) kế tiếp còn cặp trùng và mở khoang có ghế trùng đầu tiên. */
+  function showConflict() {
+    if (!result) return;
+    const next = nextConflictSlot(result.slots.map((row) => row.map((x) => x.conflictPairs)), cur);
+    if (!next) return;
+    const first = Math.min(...result.slots[next.s][next.r].conflictSeats);
+    setSel(next);
+    if (Number.isFinite(first)) setZone(seatsOf[next.r][first].block);
+    setQuery("");
+  }
+
   const place = (at: SeatRef) => `${slotName(at.s, rooms[at.r].name, S)} · Máy ${seatsOf[at.r][at.i].number}`;
 
   return (
     <>
-      <Card className="flex flex-1 flex-col gap-4" aria-label="Kết quả xếp chỗ">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <h2 className="mr-2 text-lg font-semibold">Kết quả xếp chỗ</h2>
-          <Pill><b className="font-semibold">{people.length}</b> người</Pill>
-          {R > 1 || S > 1 ? (
-            <Pill><b className="font-semibold">{S}</b> ca · <b className="font-semibold">{R}</b> phòng</Pill>
-          ) : (
-            <Pill><b className="font-semibold">{people.length}/{totalSeats}</b> máy</Pill>
-          )}
-          {result && !running &&
-            (conflicts === 0 ? (
-              <Pill tone="ok"><CheckIcon className="size-3.5" /> Không ai ngồi cạnh người cùng ĐV</Pill>
-            ) : (
-              <Pill tone="warn">Còn {conflicts} cặp cùng ĐV ngồi cạnh nhau</Pill>
-            ))}
-          {running && <Pill>Đang xếp…{progress.total > 1 ? ` ${progress.done}/${progress.total} phòng` : ""}</Pill>}
-          <span className="flex-1" />
-          <Button onClick={onRerun} disabled={running}>
-            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="size-4">
-              <path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 2.5v3h-3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Xếp lại
-          </Button>
-        </div>
+      <Card className="flex flex-1 flex-col gap-6" aria-label="Kết quả xếp chỗ">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-lg font-semibold">Kết quả xếp chỗ</h2>
+            {result && !running &&
+              (conflicts === 0 ? (
+                <Pill tone="ok"><CheckIcon className="size-3.5" /> Không ai ngồi cạnh người cùng ĐV</Pill>
+              ) : (
+                <button
+                  type="button"
+                  title="Tới chỗ còn cặp cùng ĐV ngồi cạnh nhau"
+                  onClick={showConflict}
+                  className="inline-flex h-10 items-center gap-2 rounded-control bg-warn-bg px-3 text-body font-medium text-warn hover:brightness-95"
+                >
+                  <WarnIcon />
+                  Còn {conflicts} cặp cùng ĐV ngồi cạnh nhau
+                  <span className="font-semibold underline">Xem</span>
+                </button>
+              ))}
+            {running && <Pill>Đang xếp…{progress.total > 1 ? ` ${progress.done}/${progress.total} phòng` : ""}</Pill>}
+            <span className="flex-1" />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                aria-expanded={options}
+                aria-controls="tuy-chon-xep"
+                onClick={() => setOptions(!options)}
+                className="aria-expanded:bg-brand-soft aria-expanded:text-brand-ink"
+              >
+                <SlidersIcon />
+                Tuỳ chọn xếp
+                <ChevronIcon className={`size-4 transition-transform ${options ? "rotate-180" : ""}`} />
+              </Button>
+              <Button onClick={onRerun} disabled={running}>
+                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="size-4">
+                  <path d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 2.5v3h-3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Xếp lại
+              </Button>
+            </div>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-card bg-subtle px-4 py-3">
-          <div className="flex items-center gap-3" title={minSessions > 1 ? `Cần ít nhất ${minSessions} ca mới đủ chỗ` : "Tăng số ca nếu muốn mỗi phòng đỡ đông"}>
-            <NumberStepper
-              id="sessions"
-              label="Số ca thi"
-              value={sessions}
-              min={minSessions}
-              max={MAX_SESSIONS}
-              readOnly
-              onChange={(v) => v && v !== sessions && !running && onSessions(v)}
-            />
-            {minSessions > 1 && <span className="text-caption text-muted">tối thiểu {minSessions}</span>}
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-body font-medium">Tính là ngồi cạnh nhau</span>
-            <Segmented
-              label="Tính ngồi cạnh nhau"
-              value={adj}
-              onChange={onAdj}
-              options={[
-                { value: "lr", label: "Trái - phải", hint: "Chỉ tính hai người liền nhau trong cùng hàng, cùng khoang" },
-                { value: "lrfb", label: "Thêm trước - sau", hint: "Tính cả người ngồi ngay trước và ngay sau" },
-                { value: "all", label: "Thêm chéo", hint: "Tính cả người ngồi chéo" },
-              ]}
-            />
-          </div>
-          {S * totalSeats > people.length && (
-            <div className="flex items-center gap-3">
-              <span className="text-body font-medium">Máy để trống</span>
-              <Segmented
-                label="Máy trống"
-                value={spare}
-                onChange={onSpare}
-                options={[
-                  { value: "tail", label: "Dồn cuối phòng", hint: "Để trống các máy số lớn nhất (máy dự phòng nằm ở cuối)" },
-                  { value: "spread", label: "Rải xen kẽ", hint: "Chỗ trống xen kẽ giữa các máy, dễ xếp hơn khi có đơn vị đông" },
-                ]}
-              />
+          {options && (
+            <div id="tuy-chon-xep" className="flex flex-wrap items-end gap-x-6 gap-y-4 rounded-card bg-subtle p-4">
+              <div
+                className="flex items-end gap-3"
+                title={minSessions > 1 ? `Cần ít nhất ${minSessions} ca mới đủ chỗ` : "Tăng số ca nếu muốn mỗi phòng đỡ đông"}
+              >
+                <NumberStepper
+                  stacked
+                  id="sessions"
+                  label="Số ca thi"
+                  value={sessions}
+                  min={minSessions}
+                  max={MAX_SESSIONS}
+                  readOnly
+                  onChange={(v) => v && v !== sessions && !running && onSessions(v)}
+                />
+                {minSessions > 1 && <span className="pb-2.5 text-caption text-muted">tối thiểu {minSessions}</span>}
+              </div>
+              <div className="flex flex-col gap-2">
+                <span className="text-caption font-medium text-muted">Tính là ngồi cạnh nhau</span>
+                <Segmented
+                  label="Tính là ngồi cạnh nhau"
+                  value={adj}
+                  onChange={onAdj}
+                  options={[
+                    { value: "lr", label: "Trái - phải", hint: "Chỉ tính hai người liền nhau trong cùng hàng, cùng khoang" },
+                    { value: "lrfb", label: "Thêm trước - sau", hint: "Tính cả người ngồi ngay trước và ngay sau" },
+                    { value: "all", label: "Thêm chéo", hint: "Tính cả người ngồi chéo" },
+                  ]}
+                />
+              </div>
+              {S * totalSeats > people.length && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-caption font-medium text-muted">Máy để trống</span>
+                  <Segmented
+                    label="Máy để trống"
+                    value={spare}
+                    onChange={onSpare}
+                    options={[
+                      { value: "tail", label: "Dồn cuối phòng", hint: "Để trống các máy số lớn nhất (máy dự phòng nằm ở cuối)" },
+                      { value: "spread", label: "Rải xen kẽ", hint: "Chỗ trống xen kẽ giữa các máy, dễ xếp hơn khi có đơn vị đông" },
+                    ]}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {result && S * R > 1 && (
-          <div className="flex flex-col gap-2">
-            {R > 1 && <span className="text-body font-medium">Chọn ca, phòng để xem</span>}
-            {R === 1 ? (
-              <Segmented
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            {S > 1 && (
+              <SlotPicker
                 label="Chọn ca"
-                value={String(cur.s)}
-                onChange={(v) => setSel({ s: Number(v), r: 0 })}
-                options={result.slots.map((row, s) => ({
-                  value: String(s),
-                  label: `Ca ${s + 1} · ${row[0].items.filter((p) => p >= 0).length} người${row[0].conflictPairs ? ` · ${row[0].conflictPairs} cặp trùng` : ""}`,
+                value={cur.s}
+                onChange={(s) => setSel({ ...cur, s })}
+                options={Array.from({ length: S }, (_, s) => ({
+                  label: `Ca ${s + 1}`,
+                  alert: !!result?.slots[s]?.some((x) => x.conflictPairs > 0),
                 }))}
               />
-) : (
-              <div className="overflow-x-auto rounded-card bg-subtle p-2">
-                <table className="border-separate border-spacing-1.5 text-body">
-                  <thead>
-                    <tr>
-                      <th />
-                      {rooms.map((rm, r) => (
-                        <th key={rm.id} className="px-1 text-left align-bottom font-medium">
-                          <span className="block font-semibold">{rm.name}</span>
-                          <span className="block text-caption font-normal text-muted">
-                            {capacityOf(seatsOf[r].length, rm.reserve)} chỗ mỗi ca{rm.reserve ? ` + ${rm.reserve} dự phòng` : ""}
-                          </span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.slots.map((row, s) => (
-                      <tr key={s}>
-                        <th scope="row" className="pr-2 text-left font-semibold whitespace-nowrap">Ca {s + 1}</th>
-                        {row.map((x, r) => {
-                          const on = s === cur.s && r === cur.r;
-                          return (
-                            <td key={r}>
-                              <button
-                                type="button"
-                                aria-pressed={on}
-                                aria-label={`${slotName(s, rooms[r].name, S)}: ${x.items.filter((p) => p >= 0).length} người`}
-                                onClick={() => setSel({ s, r })}
-                                className={`flex h-11 w-full min-w-32 items-center justify-between gap-3 rounded-control px-3 ${
-                                  on ? "bg-white font-semibold ring-2 ring-brand" : "bg-white/60 hover:bg-white"
-                                }`}
-                              >
-                                <span className="tabular-nums">{x.items.filter((p) => p >= 0).length} người</span>
-                                {x.conflictPairs ? (
-                                  <span className="text-caption font-semibold text-warn">{x.conflictPairs} cặp</span>
-                                ) : (
-                                  <CheckIcon className="size-4 text-ok" />
-                                )}
-                              </button>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            )}
+            {R > 1 ? (
+              <div className="flex flex-wrap items-center gap-1">
+                <SlotPicker
+                  label="Chọn phòng"
+                  value={cur.r}
+                  onChange={(r) => setSel({ ...cur, r })}
+                  options={rooms.map((rm, r) => ({ label: rm.name, alert: !!result?.slots[cur.s]?.[r]?.conflictPairs }))}
+                />
+                <EditableName key={room.id} iconOnly value={room.name} label="Đổi tên phòng" onChange={(name) => onRename(cur.r, name)} />
               </div>
+            ) : (
+              <h3 className="flex min-w-0 items-center text-body font-semibold">
+                <EditableName key={room.id} value={room.name} label="Đổi tên phòng" onChange={(name) => onRename(cur.r, name)} />
+              </h3>
+            )}
+            {slot && (
+              <span className="text-caption text-muted tabular-nums">
+                {filled} người · {seats.length > filled ? `${seats.length - filled} máy trống` : "kín chỗ"}
+                {reserve ? ` (giữ ${reserve} dự phòng)` : ""}
+              </span>
             )}
           </div>
-        )}
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-sm text-muted">Màu theo đơn vị:</span>
-          {units.map((u) => (
-            <span key={u.id} className="inline-flex h-8 items-center gap-2 rounded-chip bg-subtle px-2.5 text-sm">
-              <span className="size-3 rounded-sm" style={{ background: unitColor(u.id) }} />
-              {u.name}
-              <b className="font-semibold tabular-nums">{u.count}</b>
-            </span>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t border-line pt-4">
-          <h3 className="flex min-w-0 items-center gap-1.5 text-lg font-semibold">
-            {S > 1 && <span className="shrink-0">Ca {cur.s + 1} ·</span>}
-            <EditableName key={room.id} value={room.name} label="Đổi tên phòng" onChange={(name) => onRename(cur.r, name)} />
-          </h3>
-          {slot && (
-            <span className="text-body text-muted tabular-nums">
-              {filled} người / {seats.length} máy
-              {seats.length > filled ? ` · ${seats.length - filled} máy trống` : ""}
-              {reserve ? ` (giữ ${reserve} dự phòng)` : ""}
-            </span>
+          {slot && slot.conflictPairs > 0 && slot.capacityIssues.length > 0 && (
+            <Notice tone="warn" className="flex items-start gap-3">
+              <WarnIcon className="mt-1 size-4" />
+              <span>
+                {slot.capacityIssues.map((c) => `${units[c.unitId].name} có ${c.count} người trong phòng này, chỉ xếp được tối đa ${c.max} người không ngồi cạnh nhau`).join(". ")}.
+                Hãy thêm ca, bỏ bớt máy dự phòng, chọn &quot;Rải xen kẽ&quot; hoặc tính ngồi cạnh nhau lỏng hơn.
+              </span>
+            </Notice>
           )}
-        </div>
-        {slot && slot.conflictPairs > 0 && slot.capacityIssues.length > 0 && (
-          <Notice tone="warn">
-            {slot.capacityIssues.map((c) => `${units[c.unitId].name} có ${c.count} người trong phòng này, chỉ xếp được tối đa ${c.max} người không ngồi cạnh nhau`).join(". ")}.
-            Hãy thêm ca, bỏ bớt máy dự phòng, chọn &quot;Trống rải&quot; hoặc tính cạnh nhau lỏng hơn.
-          </Notice>
-        )}
 
-        <div className={`overflow-auto rounded-card bg-subtle p-5 ${running ? "opacity-50" : ""}`}>
-          {slot ? (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={pointerWithin}
-              onDragStart={(e) => { setActiveSeat(Number(e.active.id)); setOverSeat(null); }}
-              onDragOver={(e) => setOverSeat(e.over ? Number(e.over.id) : null)}
-              onDragEnd={dragEnd}
-              onDragCancel={() => setActiveSeat(null)}
-            >
-            <div className="mx-auto w-fit">
-              <SeatZones
-                room={room}
-                seats={seats}
-                onZone={setZone}
-                zoneClass={(b) => (b === zone ? "bg-zone-active ring-2 ring-brand" : "bg-zone hover:bg-zone-hover")}
-                renderSeat={(seat) => {
-                  if (!seat) return <span className="block h-10 w-11" />;
-                  const i = indexOf.get(seat.key)!;
-                  const p = slot.items[i] >= 0 ? people[slot.items[i]] : null;
-                  const bad = slot.conflictSeats.has(i);
-                  return (
-                    <DraggableSeat
-                      id={i}
-                      number={seat.number}
-                      color={p ? unitColor(p.unitId) : null}
-                      title={p ? `Máy ${seat.number}: ${p.name} (${p.code}), ${units[p.unitId].name}${p.field ? `, ${p.field}` : ""}` : ""}
-                      bad={bad}
-                      busy={activeSeat !== null}
-                      canDrag={!!p && !running}
-                      elRef={(el) => { if (el) seatEls.current.set(i, el); else seatEls.current.delete(i); }}
+          <div className={`overflow-auto rounded-card bg-subtle p-4 ${running ? "opacity-50" : ""}`}>
+            {slot ? (
+              <>
+                <DndContext
+                  sensors={sensors}
+                  accessibility={DRAG_A11Y}
+                  collisionDetection={pointerWithin}
+                  onDragStart={(e) => { setActiveSeat(Number(e.active.id)); setOverSeat(null); }}
+                  onDragOver={(e) => setOverSeat(e.over ? Number(e.over.id) : null)}
+                  onDragEnd={dragEnd}
+                  onDragCancel={() => setActiveSeat(null)}
+                >
+                  <div className="mx-auto w-fit">
+                    <SeatZones
+                      room={room}
+                      seats={seats}
+                      onZone={setZone}
+                      // Khoang đang xem chỉ viền nhạt; viền xanh đậm dành cho ô đích khi kéo thả.
+                      zoneClass={(b) => (room.blocks > 1 && b === zone ? "bg-zone-active ring-2 ring-brand-line" : "bg-zone hover:bg-zone-hover")}
+                      renderSeat={(seat) => {
+                        if (!seat) return <span className="block h-10 w-11" />;
+                        const i = indexOf.get(seat.key)!;
+                        const p = slot.items[i] >= 0 ? people[slot.items[i]] : null;
+                        const bad = slot.conflictSeats.has(i);
+                        return (
+                          <DraggableSeat
+                            id={i}
+                            number={seat.number}
+                            color={p ? unitColor(p.unitId) : null}
+                            title={p ? `Máy ${seat.number}: ${p.name} (${p.code}), ${units[p.unitId].name}${p.field ? `, ${p.field}` : ""}` : ""}
+                            bad={bad}
+                            busy={activeSeat !== null}
+                            canDrag={!!p && !running}
+                            elRef={(el) => { if (el) seatEls.current.set(i, el); else seatEls.current.delete(i); }}
+                          />
+                        );
+                      }}
                     />
-                  );
-                }}
-              />
-              <p className="mt-3 text-center text-sm text-muted">
-                Muốn hai người đổi chỗ: <b className="font-semibold text-ink">kéo số máy này thả vào số máy kia</b>. Bấm vào khoang để xem danh sách bên dưới.
-              </p>
-            </div>
-              {/* Thả vào ô khác thì hộp xác nhận hiện ngay; thả ra ngoài hay Esc thì ô bay về chỗ cũ. */}
-              <DragOverlay modifiers={[snapCenterToCursor]} dropAnimation={overSeat !== null ? null : undefined}>
-                {activeSeat !== null && slot && slot.items[activeSeat] >= 0 && (
-                  <SeatGhost number={seats[activeSeat].number} color={unitColor(people[slot.items[activeSeat]].unitId)} />
-                )}
-              </DragOverlay>
-            </DndContext>
-          ) : (
-            <p className="py-16 text-center text-muted">Đang xếp…</p>
-          )}
+                  </div>
+                  {/* Thả vào ô khác thì hộp xác nhận hiện ngay; thả ra ngoài hay Esc thì ô bay về chỗ cũ. */}
+                  <DragOverlay modifiers={[snapCenterToCursor]} dropAnimation={overSeat !== null ? null : undefined}>
+                    {activeSeat !== null && slot.items[activeSeat] >= 0 && (
+                      <SeatGhost number={seats[activeSeat].number} color={unitColor(people[slot.items[activeSeat]].unitId)} />
+                    )}
+                  </DragOverlay>
+                </DndContext>
+                <p className="mt-3 text-center text-caption text-muted">
+                  {slot.conflictPairs > 0 && "Ô viền đỏ là người đang ngồi cạnh người cùng ĐV. "}
+                  Kéo số máy này thả vào số máy kia để hai người đổi chỗ.
+                  {slot.conflictPairs === 0 && room.blocks > 1 && " Bấm một khoang để xem danh sách của khoang đó."}
+                </p>
+              </>
+            ) : (
+              <p className="py-16 text-center text-muted">Đang xếp…</p>
+            )}
+          </div>
+
+          <ul aria-label="Màu theo đơn vị" className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted">
+            {units.map((u) => (
+              <li key={u.id} className="inline-flex items-center gap-2">
+                <span className="size-3 shrink-0 rounded-sm" style={{ background: unitColor(u.id) }} />
+                <span className="italic-note">{u.name}</span>
+                <span className="font-medium text-ink tabular-nums">{u.count}</span>
+              </li>
+            ))}
+          </ul>
         </div>
 
-        <section aria-label="Danh sách chỗ ngồi" className="flex flex-col overflow-hidden rounded-card bg-subtle">
-          <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3">
-            <span className="font-semibold">{hits ? `Tìm thấy ${hits.length}${hits.length === MAX_HITS ? "+" : ""} người` : `Danh sách khoang ${zone + 1}`}</span>
+        <section aria-label="Danh sách chỗ ngồi" className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <h3 className="text-body font-semibold">
+              {hits
+                ? `Tìm thấy ${hits.length}${hits.length === MAX_HITS ? "+" : ""} người`
+                : room.blocks > 1 ? `Danh sách khoang ${zone + 1}` : "Danh sách chỗ ngồi"}
+            </h3>
             {!hits && (
-              <span className="text-caption text-muted">
-                {zoneRows.filter((x) => x.p >= 0).length} người / {zoneRows.length} máy
+              <span className="text-caption text-muted tabular-nums">
+                {zonePeople.length} người{zoneEmpty.length ? ` · ${zoneEmpty.length} máy trống` : ""}
               </span>
             )}
             <span className="flex-1" />
-            <input
-              type="search"
-              aria-label="Tìm theo họ tên hoặc Mã CC"
-              placeholder="Tìm họ tên hoặc Mã CC (mọi ca, mọi phòng)"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="field h-10 w-96 bg-white px-3 text-body"
-            />
+            <label className="relative block w-90 max-w-full">
+              <span className="sr-only">Tìm theo họ tên hoặc Mã CC</span>
+              <SearchIcon className="pointer-events-none absolute top-3 left-3 size-4 text-faint" />
+              <input
+                type="search"
+                placeholder="Tìm họ tên hoặc Mã CC"
+                title={R * S > 1 ? "Tìm trong mọi ca, mọi phòng" : undefined}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="field h-10 w-full pr-3 pl-9 text-body"
+              />
+            </label>
           </div>
-          <div className="max-h-130 overflow-auto px-2">
+          <div className="max-h-130 overflow-auto">
             <table className="w-full border-collapse text-body">
-              <thead className="sticky top-0 bg-subtle text-left text-caption text-muted">
+              <thead className="sticky top-0 text-left text-caption text-muted">
                 <tr className="h-9">
-                  {hits && <th className="px-2 font-medium">Ca · Phòng</th>}
-                  <th className="w-14 px-2 font-medium">Máy</th>
-                  <th className="px-2 font-medium">Họ tên</th>
-                  <th className="px-2 font-medium">Mã CC</th>
-                  <th className="px-2 font-medium">Đơn vị</th>
-                  {hasField && <th className="px-2 font-medium">Lĩnh vực</th>}
-                  <th className="w-24 px-2" />
+                  {hits && <th className={TH}>Ca · Phòng</th>}
+                  <th className={`w-16 ${TH}`}>Máy</th>
+                  <th className={TH}>Họ tên</th>
+                  <th className={TH}>Mã CC</th>
+                  <th className={TH}>Đơn vị</th>
+                  {hasField && <th className={TH}>Lĩnh vực</th>}
+                  <th className={`w-26 ${TH}`}><span className="sr-only">Thao tác</span></th>
                 </tr>
               </thead>
               <tbody>
-                {(hits ?? zoneRows).map(({ at, p: pi }) => {
-                  const p = pi >= 0 ? people[pi] : null;
+                {(hits ?? zonePeople).map(({ at, p: pi }) => {
+                  const p = people[pi];
                   const bad = !!result?.slots[at.s][at.r].conflictSeats.has(at.i);
                   return (
-                    <tr key={`${at.s}-${at.r}-${at.i}`} className={`h-11 border-b border-line ${bad ? "bg-danger-bg" : ""}`}>
+                    <tr key={`${at.s}-${at.r}-${at.i}`} className={`h-12 border-b border-line ${bad ? "bg-danger-bg" : ""}`}>
                       {hits && (
-                        <td className="px-2">
+                        <td className="px-3">
                           <button type="button" onClick={() => show(at)} className="text-left font-medium text-brand-ink hover:underline">
                             {slotName(at.s, rooms[at.r].name, S)}
                           </button>
                         </td>
                       )}
-                      <td className={`px-2 font-semibold tabular-nums ${bad ? "text-danger" : "text-muted"}`}>{seatsOf[at.r][at.i].number}</td>
-                      {p ? (
-                        <>
-                          <td className="px-2 font-semibold">
-                            <span className="inline-flex items-center gap-2">
-                              <span className="size-2.5 shrink-0 rounded-sm" style={{ background: unitColor(p.unitId) }} />
-                              {p.name}
-                            </span>
-                          </td>
-                          <td className="px-2 font-mono text-caption">{p.code}</td>
-                          <td className="px-2">{units[p.unitId].name}</td>
-                          {hasField && <td className="px-2">{p.field}</td>}
-                          <td className="px-2 text-right">
-                            <Button className="h-8 px-3 text-sm whitespace-nowrap" disabled={running} onClick={() => setMoving(at)}>Đổi chỗ</Button>
-                          </td>
-                        </>
-                      ) : (
-                        <td colSpan={hasField ? 5 : 4} className="px-2 text-faint">Trống</td>
-                      )}
+                      <td className={`px-3 tabular-nums ${bad ? "font-semibold text-danger" : "text-muted"}`}>{seatsOf[at.r][at.i].number}</td>
+                      <td className="px-3 font-semibold">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="size-3 shrink-0 rounded-sm" style={{ background: unitColor(p.unitId) }} />
+                          {p.name}
+                        </span>
+                      </td>
+                      <td className="px-3 font-mono text-caption">{p.code}</td>
+                      <td className="px-3">{units[p.unitId].name}</td>
+                      {hasField && <td className="px-3">{p.field}</td>}
+                      <td className="px-1 text-right">
+                        <Button variant="ghost" className="whitespace-nowrap" disabled={running} onClick={() => setMoving(at)}>Đổi chỗ</Button>
+                      </td>
                     </tr>
                   );
                 })}
+                {!hits && zoneEmpty.length > 0 && (
+                  <tr className="h-12">
+                    <td colSpan={hasField ? 6 : 5} className="px-3 text-faint tabular-nums">
+                      {zoneEmpty.length} máy trống: {seatRanges(zoneEmpty)}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
             {hits && hits.length === 0 && <p className="py-6 text-center text-muted">Không có ai khớp &quot;{q}&quot;.</p>}
@@ -471,9 +526,9 @@ export function ResultStep({
         </section>
       </Card>
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <Button size="lg" onClick={onBack}>Quay lại</Button>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {outdated && !dialog && <Pill tone="warn">Bản chia sẻ chưa cập nhật</Pill>}
           <Button size="lg" disabled={!result || running || sharing} onClick={openShare}>
             {sharing ? "Đang chia sẻ…" : "Chia sẻ phòng thi"}

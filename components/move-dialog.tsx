@@ -72,11 +72,11 @@ export function MoveDialog({
             <span className="size-3 shrink-0 rounded-sm" style={{ background: unitColor(person.unitId) }} />
             {person.name} <span className="font-mono text-caption font-normal text-muted">{person.code}</span>
           </p>
-          <p className="text-sm text-muted">
+          <p className="text-caption text-muted">
             {units[person.unitId].name}
             {person.field ? ` · ${person.field}` : ""}
           </p>
-          <p className="text-sm">Đang ngồi: <b className="font-semibold">{place(from)}</b></p>
+          <p className="text-body">Đang ngồi: <b className="font-semibold">{place(from)}</b></p>
         </div>
 
         <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2.5">
@@ -116,7 +116,7 @@ export function MoveDialog({
 
         {valid && (
           <div className="flex flex-col gap-2">
-            <p className="text-sm">
+            <p className="text-body">
               {other >= 0 ? (
                 <>
                   Đổi chỗ với <b className="font-semibold">{people[other].name}</b>; người này về {place(from)}.
@@ -136,7 +136,7 @@ export function MoveDialog({
             {otherConflicts > 0 && (
               <Notice tone="warn">{people[other].name} sẽ ngồi cạnh {otherConflicts} người cùng ĐV.</Notice>
             )}
-            {!meConflicts && !otherConflicts && <p className="text-sm font-semibold text-ok">Không ai ngồi cạnh người cùng ĐV.</p>}
+            {!meConflicts && !otherConflicts && <p className="text-body font-medium text-ok">Không ai ngồi cạnh người cùng ĐV.</p>}
           </div>
         )}
 

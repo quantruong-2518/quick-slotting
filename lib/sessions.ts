@@ -94,6 +94,23 @@ export function suggestSeat(items: number[], nb: number[][], unitOf: number[], p
   return best;
 }
 
+/**
+ * Ô (ca, phòng) kế tiếp còn cặp cùng ĐV ngồi cạnh nhau: tìm từ ngay sau ô đang xem, hết thì quay vòng
+ * (có thể về chính ô đang xem); null nếu không ô nào còn. pairs[ca][phòng] = số cặp.
+ */
+export function nextConflictSlot(pairs: number[][], cur: { s: number; r: number }): { s: number; r: number } | null {
+  const R = pairs[0]?.length ?? 0;
+  const total = pairs.length * R;
+  const start = cur.s * R + cur.r;
+  for (let k = 1; k <= total; k++) {
+    const at = (start + k) % total;
+    const s = Math.floor(at / R);
+    const r = at % R;
+    if (pairs[s][r] > 0) return { s, r };
+  }
+  return null;
+}
+
 /** Tên một ô cho người đọc: "Ca 2 · Phòng máy 1"; chỉ có một ca thì chỉ còn tên phòng. */
 export const slotName = (s: number, roomName: string, sessions: number) =>
   sessions > 1 ? `Ca ${s + 1} · ${roomName}` : roomName;

@@ -39,7 +39,7 @@ export function SwapDialog({
         <span className="truncate">{p.name}</span>
       </span>
       <span className="text-caption text-muted">{units[p.unitId].name}</span>
-      <span className="text-sm tabular-nums">
+      <span className="text-body tabular-nums">
         Máy <b className="font-semibold">{seatNo(at)}</b> → Máy <b className="font-semibold text-brand-ink">{seatNo(to)}</b>
       </span>
     </div>
@@ -59,10 +59,10 @@ export function SwapDialog({
           <span aria-hidden="true" className="self-center text-xl text-muted">⇄</span>
           {card(people[pb], b, a)}
         </div>
-        {(a.s !== b.s || a.r !== b.r) && <p className="text-sm text-muted">{place(a)} ⇄ {place(b)}</p>}
+        {(a.s !== b.s || a.r !== b.r) && <p className="text-caption text-muted">{place(a)} ⇄ {place(b)}</p>}
         {conflictsA > 0 && <Notice tone="warn">{people[pa].name} sẽ ngồi cạnh {conflictsA} người cùng ĐV.</Notice>}
         {conflictsB > 0 && <Notice tone="warn">{people[pb].name} sẽ ngồi cạnh {conflictsB} người cùng ĐV.</Notice>}
-        {!conflictsA && !conflictsB && <p className="text-sm font-semibold text-ok">Không ai ngồi cạnh người cùng ĐV.</p>}
+        {!conflictsA && !conflictsB && <p className="text-body font-medium text-ok">Không ai ngồi cạnh người cùng ĐV.</p>}
         <div className="flex justify-end gap-3">
           <Button onClick={() => ref.current?.close()}>Huỷ</Button>
           <Button type="submit" variant="primary">Xác nhận đổi chỗ</Button>

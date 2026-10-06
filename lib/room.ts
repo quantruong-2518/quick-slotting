@@ -99,6 +99,20 @@ export function buildNeighbors(room: RoomConfig, seats: Seat[], adj: Adjacency):
 }
 
 /** Hướng dẫn vị trí dễ hiểu: khoang, hàng, ghế (đều tính từ 1). */
+/** Ghi gọn dãy số máy: từ 3 số liền nhau trở lên thì gộp thành khoảng, vd [5, 19, 20, 21] → "5, 19–21". */
+export function seatRanges(numbers: number[]): string {
+  const sorted = [...numbers].sort((a, b) => a - b);
+  const out: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+    if (j - i >= 2) out.push(`${sorted[i]}–${sorted[j]}`);
+    else for (let k = i; k <= j; k++) out.push(String(sorted[k]));
+    i = j + 1;
+  }
+  return out.join(", ");
+}
+
 export function seatPosition(seat: Seat) {
   return { block: seat.block + 1, row: seat.row + 1, chair: seat.col + 1 };
 }

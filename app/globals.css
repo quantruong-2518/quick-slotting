@@ -7,8 +7,11 @@
 
   /* Cỡ chữ riêng; ngoài ra dùng text-xs/sm/lg/xl/2xl mặc định. */
   --text-caption: 13px; /* chú thích, trạng thái phụ */
+  --text-caption--line-height: 20px;
   --text-body: 15px; /* chữ chính của nút, nhãn, bảng */
+  --text-body--line-height: 24px;
   --text-title: 22px; /* số liệu nổi bật */
+  --text-title--line-height: 28px;
 
   /* Màu thương hiệu */
   --color-brand: #2451d6;
@@ -67,6 +70,12 @@
 /* Ô nhập chuẩn: nền control, viền brand khi focus. Tự thêm cao/rộng/cỡ chữ. */
 @utility field {
   @apply rounded-control bg-control outline-none focus:ring-2 focus:ring-brand;
+}
+
+/* Chữ nghiêng thật cho chú thích (file font riêng, chỉ tải khi trang có chữ nghiêng). */
+@utility italic-note {
+  font-family: var(--font-vietnam-italic), var(--font-sans);
+  font-style: italic;
 }
 
 /* Chừa phần tai thỏ/thanh home trên điện thoại. */

@@ -8,7 +8,8 @@ export function Segmented<T extends string>({
 }: {
   label: string;
   value: T;
-  options: { value: T; label: string; hint?: string }[];
+  /** alert: lời báo ngắn (vd "có cặp trùng"); có thì hiện chấm đỏ cạnh nhãn. */
+  options: { value: T; label: string; hint?: string; alert?: string }[];
   onChange: (v: T) => void;
 }) {
   return (
@@ -19,14 +20,20 @@ export function Segmented<T extends string>({
           <button
             key={o.value}
             type="button"
-            title={o.hint}
+            title={o.hint ?? o.alert}
             aria-pressed={on}
             onClick={() => onChange(o.value)}
-            className={`h-9 flex-1 rounded-chip px-3.5 text-body whitespace-nowrap transition-colors ${
+            className={`inline-flex h-8.5 flex-1 items-center justify-center gap-2 rounded-chip px-4 text-body whitespace-nowrap transition-colors ${
               on ? "bg-white font-semibold text-ink shadow-raised" : "font-medium text-muted hover:text-ink"
             }`}
           >
             {o.label}
+            {o.alert && (
+              <>
+                <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-danger" />
+                <span className="sr-only">, {o.alert}</span>
+              </>
+            )}
           </button>
         );
       })}
