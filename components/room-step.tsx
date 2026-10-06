@@ -245,6 +245,12 @@ function RoomEditor({
               </span>
               <span className="text-title font-semibold">{total} máy</span>
             </div>
+            {same && room && total > seats.length && (
+              <div className="flex items-baseline justify-between tabular-nums">
+                <span className="text-sm text-muted">Trừ {total - seats.length} ô đã bỏ máy =</span>
+                <span className="text-title font-semibold">{seats.length} máy</span>
+              </div>
+            )}
             <Button variant={same ? "secondary" : "primary"} className="h-11" onClick={generate}>
               {same ? "Tạo lại" : room ? "Cập nhật sơ đồ" : "Tạo sơ đồ"}
             </Button>
