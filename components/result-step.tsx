@@ -21,7 +21,7 @@ import { seatRanges } from "@/lib/room";
 import { buildSharePayload } from "@/lib/room-share";
 import { MAX_SESSIONS, nextConflictSlot, slotName } from "@/lib/sessions";
 import { fingerprint, loadShare, publishRoom, shareKey, type SavedShare } from "@/lib/share-client";
-import type { Adjacency, Person, RoomConfig, Seat, SeatRef, SlotResult, SpareMode, Unit } from "@/lib/types";
+import type { Adjacency, FillMode, Person, RoomConfig, Seat, SeatRef, SlotResult, SpareMode, Unit } from "@/lib/types";
 
 /** Kết quả xếp: slots[ca][phòng]. edited = đã đổi chỗ bằng tay sau lần xếp gần nhất. */
 export interface Plan {
@@ -73,8 +73,8 @@ function SlotPicker({
 }
 
 export function ResultStep({
-  rooms, seatsOf, nbOf, people, units, result, progress, adj, spare, sessions, minSessions,
-  onAdj, onSpare, onSessions, onRerun, onMove, onRename, onBack,
+  rooms, seatsOf, nbOf, people, units, result, progress, adj, spare, sessions, minSessions, byField,
+  onFill, onAdj, onSpare, onSessions, onRerun, onMove, onRename, onBack,
 }: {
   rooms: RoomConfig[];
   seatsOf: Seat[][];
@@ -87,6 +87,8 @@ export function ResultStep({
   spare: SpareMode;
   sessions: number;
   minSessions: number;
+  byField: boolean;
+  onFill: (f: FillMode) => void;
   onAdj: (a: Adjacency) => void;
   onSpare: (s: SpareMode) => void;
   onSessions: (n: number) => void;
@@ -283,7 +285,21 @@ export function ResultStep({
 
           {options && (
             <div id="tuy-chon-xep" className="flex flex-wrap items-end gap-x-6 gap-y-4 rounded-card bg-subtle p-4">
-              <div
+              {hasField && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-caption font-medium text-muted">Cách chia người vào ca, phòng</span>
+                  <Segmented
+                    label="Cách chia người vào ca, phòng"
+                    value={byField ? "field" : "even"}
+                    onChange={(f) => !running && onFill(f)}
+                    options={[
+                      { value: "even", label: "Chia đều", hint: "Mỗi ca, mỗi phòng đông gần bằng nhau, đơn vị rải đều" },
+                      { value: "field", label: "Theo lĩnh vực", hint: "Xếp hết lĩnh vực này mới sang lĩnh vực kế; đầy phòng này mới sang phòng kế, hết phòng thì sang ca kế" },
+                    ]}
+                  />
+                </div>
+              )}
+              {!byField && <div
                 className="flex items-end gap-3"
                 title={minSessions > 1 ? `Cần ít nhất ${minSessions} ca mới đủ chỗ` : "Tăng số ca nếu muốn mỗi phòng đỡ đông"}
               >
@@ -298,7 +314,7 @@ export function ResultStep({
                   onChange={(v) => v && v !== sessions && !running && onSessions(v)}
                 />
                 {minSessions > 1 && <span className="pb-2.5 text-caption text-muted">tối thiểu {minSessions}</span>}
-              </div>
+              </div>}
               <div className="flex flex-col gap-2">
                 <span className="text-caption font-medium text-muted">Tính là ngồi cạnh nhau</span>
                 <Segmented

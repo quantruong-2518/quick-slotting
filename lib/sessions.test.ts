@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildNeighbors, buildSeats, newRoom, seatRanges } from "./room";
 import { arrange, evaluate, seededRng } from "./seating";
 import {
-  capacityOf, distribute, minSessions, nextConflictSlot, planCounts, sameUnitNeighbors, slotName, suggestSeat, swapSeats,
+  capacityOf, distribute, distributeByField, fieldRanks, minSessions, nextConflictSlot, planCounts, sameUnitNeighbors, slotName, suggestSeat, swapSeats,
 } from "./sessions";
 
 function makeUnits(sizes: number[]) {
@@ -176,4 +176,25 @@ it("ghi gọn dãy số máy: từ 3 số liền nhau thì gộp thành khoảng
   expect(seatRanges([5, 19, 20, 21, 30, 31])).toBe("5, 19–21, 30, 31");
   expect(seatRanges([7])).toBe("7");
   expect(seatRanges([])).toBe("");
+});
+
+describe("xếp theo lĩnh vực", () => {
+  it("thứ tự lĩnh vực theo lần xuất hiện đầu, trống xếp cuối", () => {
+    expect(fieldRanks(["B", "A", "b", "", "A"])).toEqual([0, 1, 0, 2, 1]);
+  });
+
+  it("dồn đầy phòng 1, rồi phòng 2, hết phòng thì sang ca sau", () => {
+    // 3 lĩnh vực: 0 có 4 người, 1 có 3, 2 có 5; 2 phòng sức chứa 3 và 4 → 7 chỗ/ca, 12 người = 2 ca.
+    const rank = [1, 0, 2, 0, 2, 1, 0, 2, 2, 0, 1, 2];
+    const g = distributeByField(rank, [3, 4], 2);
+    expect(g[0][0].map((p) => rank[p])).toEqual([0, 0, 0]);
+    expect(g[0][1].map((p) => rank[p])).toEqual([0, 1, 1, 1]);
+    expect(g[1][0].map((p) => rank[p])).toEqual([2, 2, 2]);
+    expect(g[1][1].map((p) => rank[p])).toEqual([2, 2]);
+    expect(g.flat(2).sort((a, b) => a - b)).toEqual(rank.map((_, i) => i));
+  });
+
+  it("báo lỗi khi không đủ chỗ", () => {
+    expect(() => distributeByField([0, 0, 0], [1, 1], 1)).toThrow();
+  });
 });

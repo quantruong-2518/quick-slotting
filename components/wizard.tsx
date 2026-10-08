@@ -7,8 +7,8 @@ import { ListStep, type ListState } from "./list-step";
 import { ResultStep, type Plan } from "./result-step";
 import { buildNeighbors, buildSeats, sameExceptName } from "@/lib/room";
 import { evaluate } from "@/lib/seating";
-import { MAX_SESSIONS, capacityOf, distribute, minSessions, planCounts, swapSeats } from "@/lib/sessions";
-import type { Adjacency, SeatRef, SpareMode } from "@/lib/types";
+import { MAX_SESSIONS, capacityOf, distribute, distributeByField, fieldRanks, minSessions, planCounts, swapSeats } from "@/lib/sessions";
+import type { Adjacency, FillMode, SeatRef, SpareMode } from "@/lib/types";
 import type { ArrangeMessage, ArrangeRequest } from "@/lib/arrange.worker";
 
 export default function Wizard() {
@@ -18,6 +18,7 @@ export default function Wizard() {
   const [list, setListState] = useState<ListState | null>(null);
   const [adj, setAdj] = useState<Adjacency>("lr");
   const [spare, setSpare] = useState<SpareMode>("tail");
+  const [fill, setFill] = useState<FillMode>("even");
   /** Số ca người dùng chọn; null = ít nhất có thể. */
   const [sessionsPick, setSessionsPick] = useState<number | null>(null);
   const [result, setResult] = useState<Plan | null>(null);
@@ -33,7 +34,10 @@ export default function Wizard() {
   const unitOf = useMemo(() => people.map((p) => p.unitId), [people]);
   const listOk = !!list && people.length > 0 && !list.analysis.missing.length && !list.analysis.duplicates.length;
   const minS = minSessions(people.length, capacities);
-  const sessions = Math.max(minS, sessionsPick ?? 0);
+  const hasField = !!list?.analysis.hasField && people.some((p) => p.field);
+  const byField = fill === "field" && hasField;
+  // Xếp theo lĩnh vực thì dồn đầy từng phòng nên chỉ dùng đúng số ca ít nhất.
+  const sessions = byField ? minS : Math.max(minS, sessionsPick ?? 0);
   const canArrange = rooms.length > 0 && listOk && minS <= MAX_SESSIONS;
 
   // Mọi thay đổi đầu vào đều làm kết quả cũ hết hiệu lực.
@@ -68,13 +72,15 @@ export default function Wizard() {
   const canGo = (s: Step) => s === 1 || (s === 2 && rooms.length > 0) || (s === 3 && canArrange);
 
   /** keep: giữ nguyên ai ở ca nào, phòng nào (kể cả người đã chuyển tay), chỉ xếp lại ghế trong từng phòng. */
-  function run({ nextAdj = adj, nextSpare = spare, nextSessions = sessions, keep = true } = {}) {
+  function run({ nextAdj = adj, nextSpare = spare, nextSessions = sessions, nextByField = byField, keep = true } = {}) {
     if (!canArrange) return;
     workerRef.current?.terminate();
     const groups =
       keep && result && result.slots.length === nextSessions
         ? result.slots.map((row) => row.map((x) => x.items.filter((p) => p >= 0)))
-        : distribute(unitOf, planCounts(people.length, capacities, nextSessions));
+        : nextByField
+          ? distributeByField(fieldRanks(people.map((p) => p.field)), capacities, nextSessions)
+          : distribute(unitOf, planCounts(people.length, capacities, nextSessions));
     const worker = new Worker(new URL("../lib/arrange.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = worker;
     setProgress({ done: 0, total: groups.length * rooms.length });
@@ -162,6 +168,12 @@ export default function Wizard() {
             spare={spare}
             sessions={sessions}
             minSessions={minS}
+            byField={byField}
+            onFill={(f) => {
+              if (keepEdits("Đổi cách chia sẽ chia lại người vào các ca và các phòng; những chỗ bạn đã đổi tay sẽ mất. Tiếp tục?")) return;
+              setFill(f);
+              run({ nextByField: f === "field", nextSessions: f === "field" ? minS : sessions, keep: false });
+            }}
             onAdj={(a) => { if (keepEdits(RESEAT)) return; setAdj(a); run({ nextAdj: a }); }}
             onSpare={(s) => { if (keepEdits(RESEAT)) return; setSpare(s); run({ nextSpare: s }); }}
             onSessions={(n) => {

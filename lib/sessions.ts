@@ -1,3 +1,4 @@
+import { unitKey } from "./people";
 import type { SeatRef } from "./types";
 
 /** Nhiều phòng × nhiều ca: chia người vào từng (ca, phòng) trước, rồi mới xếp ghế trong từng phòng. */
@@ -63,6 +64,37 @@ export function distribute(unitOf: number[], counts: number[][]): number[][][] {
   const order = unitOf.map((_, i) => i).sort((a, b) => unitOf[a] - unitOf[b] || a - b);
   const groups = counts.map((row) => row.map(() => [] as number[]));
   tickets.forEach((tk, k) => groups[tk.s][tk.r].push(order[k]));
+  return groups;
+}
+
+/**
+ * Thứ tự lĩnh vực theo lần xuất hiện đầu tiên trong danh sách (tên chỉ khác hoa/thường/dấu thì tính một).
+ * Người không ghi lĩnh vực xếp sau cùng. Trả rank[i] cho từng người.
+ */
+export function fieldRanks(fields: string[]): number[] {
+  const rank = new Map<string, number>();
+  const keys = fields.map((f) => unitKey(f));
+  keys.forEach((k) => { if (k && !rank.has(k)) rank.set(k, rank.size); });
+  return keys.map((k) => (k ? rank.get(k)! : rank.size));
+}
+
+/**
+ * Xếp theo lĩnh vực: dồn lần lượt từng lĩnh vực vào ca 1 – phòng 1 cho đầy, hết chỗ thì sang phòng kế,
+ * hết các phòng của ca thì sang ca kế. Trong một lĩnh vực giữ thứ tự danh sách.
+ * Trả groups[ca][phòng] = chỉ số người; ca nào còn dư thì để trống.
+ */
+export function distributeByField(rank: number[], capacities: number[], sessions: number): number[][][] {
+  if (rank.length > sum(capacities) * sessions) throw new Error("Không đủ chỗ cho số ca này");
+  const order = rank.map((_, i) => i).sort((a, b) => rank[a] - rank[b] || a - b);
+  const groups = Array.from({ length: sessions }, () => capacities.map(() => [] as number[]));
+  let s = 0;
+  let r = 0;
+  for (const p of order) {
+    while (groups[s][r].length >= capacities[r]) {
+      if (++r === capacities.length) { r = 0; s++; }
+    }
+    groups[s][r].push(p);
+  }
   return groups;
 }
 

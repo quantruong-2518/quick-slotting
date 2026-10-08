@@ -3,6 +3,8 @@ export type NumberingStyle = "snake" | "ltr";
 export type NumberingOrder = "room" | "block";
 export type Adjacency = "lr" | "lrfb" | "all";
 export type SpareMode = "tail" | "spread";
+/** Cách chia người vào ca và phòng: đều khắp, hay dồn từng lĩnh vực cho đầy phòng này rồi mới sang phòng khác. */
+export type FillMode = "even" | "field";
 
 export interface BlockSize {
   rows: number;
