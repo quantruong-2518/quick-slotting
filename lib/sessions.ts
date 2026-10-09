@@ -67,33 +67,72 @@ export function distribute(unitOf: number[], counts: number[][]): number[][][] {
   return groups;
 }
 
+/** Một lĩnh vực trong danh sách: key để so khớp (bỏ hoa/thường/dấu), name để hiển thị, count = số người. */
+export interface FieldInfo { key: string; name: string; count: number }
+
 /**
- * Thứ tự lĩnh vực theo lần xuất hiện đầu tiên trong danh sách (tên chỉ khác hoa/thường/dấu thì tính một).
- * Người không ghi lĩnh vực xếp sau cùng. Trả rank[i] cho từng người.
+ * Các lĩnh vực theo thứ tự sẽ xếp: `order` (key) đứng trước, lĩnh vực chưa có trong `order` theo lần xuất hiện đầu
+ * tiên trong danh sách. Người không ghi lĩnh vực không tính ở đây, luôn xếp sau cùng.
  */
-export function fieldRanks(fields: string[]): number[] {
-  const rank = new Map<string, number>();
-  const keys = fields.map((f) => unitKey(f));
-  keys.forEach((k) => { if (k && !rank.has(k)) rank.set(k, rank.size); });
-  return keys.map((k) => (k ? rank.get(k)! : rank.size));
+export function fieldList(fields: string[], order: string[] = []): FieldInfo[] {
+  const found = new Map<string, FieldInfo>();
+  for (const f of fields) {
+    const key = unitKey(f);
+    if (!key) continue;
+    const info = found.get(key);
+    if (info) info.count++;
+    else found.set(key, { key, name: f.trim(), count: 1 });
+  }
+  const first = order.flatMap((k) => (found.has(k) ? [found.get(k)!] : []));
+  const used = new Set(first.map((x) => x.key));
+  return [...first, ...[...found.values()].filter((x) => !used.has(x.key))];
+}
+
+/** Rank của từng người theo thứ tự `fieldList`; người không ghi lĩnh vực xếp sau cùng. */
+export function fieldRanks(fields: string[], order: string[] = []): number[] {
+  const rank = new Map(fieldList(fields, order).map((f, i) => [f.key, i]));
+  const blank = rank.size;
+  return fields.map((f) => rank.get(unitKey(f)) ?? blank);
+}
+
+/** Đổi chỗ lĩnh vực thứ i với lĩnh vực kế bên (dir -1 = lên trước, 1 = xuống sau); trả danh sách key mới. */
+export function moveField(keys: string[], i: number, dir: -1 | 1): string[] {
+  const j = i + dir;
+  if (i < 0 || i >= keys.length || j < 0 || j >= keys.length) return keys;
+  const next = keys.slice();
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
 }
 
 /**
- * Xếp theo lĩnh vực: dồn lần lượt từng lĩnh vực vào ca 1 – phòng 1 cho đầy, hết chỗ thì sang phòng kế,
- * hết các phòng của ca thì sang ca kế. Trong một lĩnh vực giữ thứ tự danh sách.
- * Trả groups[ca][phòng] = chỉ số người; ca nào còn dư thì để trống.
+ * Xếp theo lĩnh vực: lần lượt từng lĩnh vực (theo rank) chiếm ca 1 – phòng 1 cho đầy, hết chỗ thì sang phòng kế,
+ * hết các phòng của ca thì sang ca kế. Trong phần các ô mà một lĩnh vực chiếm, các đơn vị được trộn đều
+ * (như `distribute`) để lát nữa xếp ghế không phải để cả đơn vị ngồi liền nhau. Một ô có thể chứa đuôi của lĩnh vực
+ * này và đầu của lĩnh vực kế. Trả groups[ca][phòng] = chỉ số người; ca nào còn dư thì để trống.
  */
-export function distributeByField(rank: number[], capacities: number[], sessions: number): number[][][] {
+export function distributeByField(rank: number[], unitOf: number[], capacities: number[], sessions: number): number[][][] {
   if (rank.length > sum(capacities) * sessions) throw new Error("Không đủ chỗ cho số ca này");
-  const order = rank.map((_, i) => i).sort((a, b) => rank[a] - rank[b] || a - b);
+  const R = capacities.length;
+  const room = Array.from({ length: sessions }, () => capacities.slice());
   const groups = Array.from({ length: sessions }, () => capacities.map(() => [] as number[]));
+  const ranks = [...new Set(rank)].sort((a, b) => a - b);
   let s = 0;
   let r = 0;
-  for (const p of order) {
-    while (groups[s][r].length >= capacities[r]) {
-      if (++r === capacities.length) { r = 0; s++; }
+  for (const k of ranks) {
+    const members = rank.flatMap((x, i) => (x === k ? [i] : []));
+    // Lĩnh vực này chiếm bao nhiêu chỗ ở từng ô, tính từ ô còn dở của lĩnh vực trước.
+    const counts = Array.from({ length: sessions }, () => capacities.map(() => 0));
+    for (let left = members.length; left > 0; ) {
+      while (room[s][r] === 0) {
+        if (++r === R) { r = 0; s++; }
+      }
+      const take = Math.min(left, room[s][r]);
+      counts[s][r] = take;
+      room[s][r] -= take;
+      left -= take;
     }
-    groups[s][r].push(p);
+    const part = distribute(members.map((p) => unitOf[p]), counts);
+    part.forEach((row, cs) => row.forEach((ids, cr) => ids.forEach((m) => groups[cs][cr].push(members[m]))));
   }
   return groups;
 }

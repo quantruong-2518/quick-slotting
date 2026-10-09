@@ -19,7 +19,7 @@ import { downloadBlob, excelFiles, resultXlsx, type ExcelFile } from "@/lib/exce
 import { norm, normalizeCode } from "@/lib/people";
 import { seatRanges } from "@/lib/room";
 import { buildSharePayload } from "@/lib/room-share";
-import { MAX_SESSIONS, nextConflictSlot, slotName } from "@/lib/sessions";
+import { MAX_SESSIONS, moveField, nextConflictSlot, slotName, type FieldInfo } from "@/lib/sessions";
 import { fingerprint, loadShare, publishRoom, shareKey, type SavedShare } from "@/lib/share-client";
 import type { Adjacency, FillMode, Person, RoomConfig, Seat, SeatRef, SlotResult, SpareMode, Unit } from "@/lib/types";
 
@@ -73,8 +73,8 @@ function SlotPicker({
 }
 
 export function ResultStep({
-  rooms, seatsOf, nbOf, people, units, result, progress, adj, spare, sessions, minSessions, byField,
-  onFill, onAdj, onSpare, onSessions, onRerun, onMove, onRename, onBack,
+  rooms, seatsOf, nbOf, people, units, result, progress, adj, spare, sessions, minSessions, byField, fields,
+  onFill, onFieldOrder, onAdj, onSpare, onSessions, onRerun, onMove, onRename, onBack,
 }: {
   rooms: RoomConfig[];
   seatsOf: Seat[][];
@@ -88,7 +88,10 @@ export function ResultStep({
   sessions: number;
   minSessions: number;
   byField: boolean;
+  /** Các lĩnh vực theo thứ tự đang xếp. */
+  fields: FieldInfo[];
   onFill: (f: FillMode) => void;
+  onFieldOrder: (keys: string[]) => void;
   onAdj: (a: Adjacency) => void;
   onSpare: (s: SpareMode) => void;
   onSessions: (n: number) => void;
@@ -294,9 +297,40 @@ export function ResultStep({
                     onChange={(f) => !running && onFill(f)}
                     options={[
                       { value: "even", label: "Chia đều", hint: "Mỗi ca, mỗi phòng đông gần bằng nhau, đơn vị rải đều" },
-                      { value: "field", label: "Theo lĩnh vực", hint: "Xếp hết lĩnh vực này mới sang lĩnh vực kế; đầy phòng này mới sang phòng kế, hết phòng thì sang ca kế" },
+                      { value: "field", label: "Theo lĩnh vực", hint: "Xếp hết lĩnh vực này mới sang lĩnh vực kế; trong một lĩnh vực các đơn vị được trộn vào nhau để không ngồi cạnh nhau" },
                     ]}
                   />
+                </div>
+              )}
+              {byField && fields.length > 1 && (
+                <div className="flex w-full flex-col gap-2">
+                  <span className="text-caption font-medium text-muted">Thứ tự xếp các lĩnh vực (trên xếp trước)</span>
+                  <ol className="flex max-w-md flex-col gap-1">
+                    {fields.map((f, i) => (
+                      <li key={f.key} className="flex items-center gap-2">
+                        <span className="w-6 text-right text-body text-muted tabular-nums">{i + 1}.</span>
+                        <span className="min-w-0 flex-1 truncate text-body">
+                          <span className="font-semibold">{f.name}</span> <span className="text-muted">· {f.count} người</span>
+                        </span>
+                        <Button
+                          aria-label={`Đưa ${f.name} lên trước`}
+                          title="Lên trước"
+                          disabled={running || i === 0}
+                          onClick={() => onFieldOrder(moveField(fields.map((x) => x.key), i, -1))}
+                        >
+                          <ChevronIcon className="size-4 rotate-180" />
+                        </Button>
+                        <Button
+                          aria-label={`Đưa ${f.name} xuống sau`}
+                          title="Xuống sau"
+                          disabled={running || i === fields.length - 1}
+                          onClick={() => onFieldOrder(moveField(fields.map((x) => x.key), i, 1))}
+                        >
+                          <ChevronIcon className="size-4" />
+                        </Button>
+                      </li>
+                    ))}
+                  </ol>
                 </div>
               )}
               {!byField && <div

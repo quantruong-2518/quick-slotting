@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildNeighbors, buildSeats, newRoom, seatRanges } from "./room";
 import { arrange, evaluate, seededRng } from "./seating";
 import {
-  capacityOf, distribute, distributeByField, fieldRanks, minSessions, nextConflictSlot, planCounts, sameUnitNeighbors, slotName, suggestSeat, swapSeats,
+  capacityOf, distribute, distributeByField, fieldList, fieldRanks, minSessions, moveField, nextConflictSlot, planCounts, sameUnitNeighbors, slotName, suggestSeat, swapSeats,
 } from "./sessions";
 
 function makeUnits(sizes: number[]) {
@@ -183,18 +183,46 @@ describe("xếp theo lĩnh vực", () => {
     expect(fieldRanks(["B", "A", "b", "", "A"])).toEqual([0, 1, 0, 2, 1]);
   });
 
+  it("chọn được thứ tự lĩnh vực; lĩnh vực chưa nêu theo lần xuất hiện, trống vẫn xếp cuối", () => {
+    expect(fieldRanks(["B", "A", "b", "", "A"], ["a"])).toEqual([1, 0, 1, 2, 0]);
+    expect(fieldList(["B", "A", "b"], ["a", "zz"]).map((f) => [f.name, f.count])).toEqual([["A", 1], ["B", 2]]);
+    expect(moveField(["a", "b", "c"], 2, -1)).toEqual(["a", "c", "b"]);
+    expect(moveField(["a", "b"], 0, -1)).toEqual(["a", "b"]);
+  });
+
   it("dồn đầy phòng 1, rồi phòng 2, hết phòng thì sang ca sau", () => {
     // 3 lĩnh vực: 0 có 4 người, 1 có 3, 2 có 5; 2 phòng sức chứa 3 và 4 → 7 chỗ/ca, 12 người = 2 ca.
     const rank = [1, 0, 2, 0, 2, 1, 0, 2, 2, 0, 1, 2];
-    const g = distributeByField(rank, [3, 4], 2);
-    expect(g[0][0].map((p) => rank[p])).toEqual([0, 0, 0]);
-    expect(g[0][1].map((p) => rank[p])).toEqual([0, 1, 1, 1]);
+    const g = distributeByField(rank, rank.map((_, i) => i), [3, 4], 2);
+    expect([...g[0][0]].map((p) => rank[p]).sort()).toEqual([0, 0, 0]);
+    expect([...g[0][1]].map((p) => rank[p]).sort()).toEqual([0, 1, 1, 1]);
     expect(g[1][0].map((p) => rank[p])).toEqual([2, 2, 2]);
     expect(g[1][1].map((p) => rank[p])).toEqual([2, 2]);
     expect(g.flat(2).sort((a, b) => a - b)).toEqual(rank.map((_, i) => i));
   });
 
+  it("trong một lĩnh vực trải qua nhiều phòng thì mỗi đơn vị được rải đều, không dồn vào một phòng", () => {
+    // Một lĩnh vực 12 người: ĐV 0 có 6, ĐV 1 có 6; 2 phòng sức chứa 6 → mỗi phòng 3 + 3.
+    const unitOf = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1];
+    const g = distributeByField(unitOf.map(() => 0), unitOf, [6, 6], 1);
+    for (const room of g[0]) {
+      expect(room.filter((p) => unitOf[p] === 0)).toHaveLength(3);
+      expect(room.filter((p) => unitOf[p] === 1)).toHaveLength(3);
+    }
+  });
+
+  it("ô nằm giữa hai lĩnh vực thì mỗi lĩnh vực chỉ trộn trong phần của mình", () => {
+    // Lĩnh vực 0 có 5 người (2 ĐV), lĩnh vực 1 có 3; hai phòng sức chứa 4 → phòng 1 có 4 người LV 0, phòng 2 có 1 người LV 0 + 3 LV 1.
+    const rank = [0, 0, 0, 0, 0, 1, 1, 1];
+    const unitOf = [0, 0, 0, 1, 1, 2, 2, 3];
+    const g = distributeByField(rank, unitOf, [4, 4], 1);
+    expect(g[0][0].every((p) => rank[p] === 0)).toBe(true);
+    expect(g[0][1].filter((p) => rank[p] === 0)).toHaveLength(1);
+    expect(g[0][1].filter((p) => rank[p] === 1)).toHaveLength(3);
+    expect(g[0][0].filter((p) => unitOf[p] === 0).length).toBeLessThanOrEqual(3);
+  });
+
   it("báo lỗi khi không đủ chỗ", () => {
-    expect(() => distributeByField([0, 0, 0], [1, 1], 1)).toThrow();
+    expect(() => distributeByField([0, 0, 0], [0, 0, 0], [1, 1], 1)).toThrow();
   });
 });

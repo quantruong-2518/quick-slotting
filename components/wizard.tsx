@@ -7,7 +7,7 @@ import { ListStep, type ListState } from "./list-step";
 import { ResultStep, type Plan } from "./result-step";
 import { buildNeighbors, buildSeats, sameExceptName } from "@/lib/room";
 import { evaluate } from "@/lib/seating";
-import { MAX_SESSIONS, capacityOf, distribute, distributeByField, fieldRanks, minSessions, planCounts, swapSeats } from "@/lib/sessions";
+import { MAX_SESSIONS, capacityOf, distribute, distributeByField, fieldList, fieldRanks, minSessions, planCounts, swapSeats } from "@/lib/sessions";
 import type { Adjacency, FillMode, SeatRef, SpareMode } from "@/lib/types";
 import type { ArrangeMessage, ArrangeRequest } from "@/lib/arrange.worker";
 
@@ -19,6 +19,8 @@ export default function Wizard() {
   const [adj, setAdj] = useState<Adjacency>("lr");
   const [spare, setSpare] = useState<SpareMode>("tail");
   const [fill, setFill] = useState<FillMode>("even");
+  /** Thứ tự lĩnh vực người dùng chọn (key); lĩnh vực chưa có trong đây theo thứ tự xuất hiện trong danh sách. */
+  const [fieldOrder, setFieldOrder] = useState<string[]>([]);
   /** Số ca người dùng chọn; null = ít nhất có thể. */
   const [sessionsPick, setSessionsPick] = useState<number | null>(null);
   const [result, setResult] = useState<Plan | null>(null);
@@ -32,6 +34,7 @@ export default function Wizard() {
   const capacities = rooms.map((r, k) => capacityOf(seatsOf[k].length, r.reserve));
   const people = useMemo(() => list?.analysis.people ?? [], [list]);
   const unitOf = useMemo(() => people.map((p) => p.unitId), [people]);
+  const fields = useMemo(() => fieldList(people.map((p) => p.field), fieldOrder), [people, fieldOrder]);
   const listOk = !!list && people.length > 0 && !list.analysis.missing.length && !list.analysis.duplicates.length;
   const minS = minSessions(people.length, capacities);
   const hasField = !!list?.analysis.hasField && people.some((p) => p.field);
@@ -47,7 +50,7 @@ export default function Wizard() {
     setResult(null);
     setSessionsPick(null);
   }
-  const setList = (l: ListState | null) => { setListState(l); reset(); };
+  const setList = (l: ListState | null) => { setListState(l); setFieldOrder([]); reset(); };
   function updateEntry(patch: Partial<Omit<RoomEntry, "key">>) {
     const old = entries[active].room;
     setEntries((es) => es.map((e, i) => (i === active ? { ...e, ...patch } : e)));
@@ -72,14 +75,14 @@ export default function Wizard() {
   const canGo = (s: Step) => s === 1 || (s === 2 && rooms.length > 0) || (s === 3 && canArrange);
 
   /** keep: giữ nguyên ai ở ca nào, phòng nào (kể cả người đã chuyển tay), chỉ xếp lại ghế trong từng phòng. */
-  function run({ nextAdj = adj, nextSpare = spare, nextSessions = sessions, nextByField = byField, keep = true } = {}) {
+  function run({ nextAdj = adj, nextSpare = spare, nextSessions = sessions, nextByField = byField, nextFieldOrder = fieldOrder, keep = true } = {}) {
     if (!canArrange) return;
     workerRef.current?.terminate();
     const groups =
       keep && result && result.slots.length === nextSessions
         ? result.slots.map((row) => row.map((x) => x.items.filter((p) => p >= 0)))
         : nextByField
-          ? distributeByField(fieldRanks(people.map((p) => p.field)), capacities, nextSessions)
+          ? distributeByField(fieldRanks(people.map((p) => p.field), nextFieldOrder), unitOf, capacities, nextSessions)
           : distribute(unitOf, planCounts(people.length, capacities, nextSessions));
     const worker = new Worker(new URL("../lib/arrange.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = worker;
@@ -169,6 +172,12 @@ export default function Wizard() {
             sessions={sessions}
             minSessions={minS}
             byField={byField}
+            fields={fields}
+            onFieldOrder={(keys) => {
+              if (keepEdits("Đổi thứ tự lĩnh vực sẽ chia lại người vào các ca và các phòng; những chỗ bạn đã đổi tay sẽ mất. Tiếp tục?")) return;
+              setFieldOrder(keys);
+              run({ nextFieldOrder: keys, keep: false });
+            }}
             onFill={(f) => {
               if (keepEdits("Đổi cách chia sẽ chia lại người vào các ca và các phòng; những chỗ bạn đã đổi tay sẽ mất. Tiếp tục?")) return;
               setFill(f);
