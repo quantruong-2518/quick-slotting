@@ -73,6 +73,33 @@ interface ArrangeInput {
   now?: () => number;
 }
 
+/** Số ghế nhiều nhất chọn được trong 0..usable-1 mà không hai ghế nào kề nhau (tham lam, luôn đạt được). */
+function greedyIndependent(nb: number[][], usable: number): number {
+  const taken = new Uint8Array(usable);
+  let n = 0;
+  for (let k = 0; k < usable; k++) {
+    if (nb[k].some((j) => j < usable && taken[j])) continue;
+    taken[k] = 1;
+    n++;
+  }
+  return n;
+}
+
+/**
+ * limits[p] = số người nhiều nhất của MỘT đơn vị có thể ngồi trong phòng đang có p người mà không ai kề nhau
+ * (p = 0..capacity). `tail` chỉ dùng p ghế đầu nên giới hạn tăng theo p; `spread` dùng mọi ghế nên không đổi.
+ * Kiểu kề `lr` và `lrfb` tính chính xác; kiểu `all` lấy một cách xếp tham lam (đạt được, có thể thấp hơn tối đa thật).
+ * Chỉ là điều kiện cần: nhiều ĐV cùng đông thì vẫn có thể không xếp trọn.
+ */
+export function unitLimits(
+  nb: number[][], seatCount: number, capacity: number, spare: SpareMode,
+  { exactPath = false, bipartite }: { exactPath?: boolean; bipartite?: (seatIndex: number) => 0 | 1 } = {},
+): number[] {
+  const at = (usable: number) => ((exactPath || bipartite) ? maxIndependent(nb, usable, bipartite) : null) ?? greedyIndependent(nb, usable);
+  if (spare === "spread") return Array.from({ length: capacity + 1 }, () => at(seatCount));
+  return Array.from({ length: capacity + 1 }, (_, p) => at(Math.min(p, seatCount)));
+}
+
 /**
  * Xếp chỗ: xáo trộn ngẫu nhiên rồi tìm kiếm cục bộ (hoán đổi ghế đang vi phạm)
  * cho tới khi không còn cặp cùng đơn vị ngồi kề hoặc hết thời gian.

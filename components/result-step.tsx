@@ -297,7 +297,7 @@ export function ResultStep({
                     onChange={(f) => !running && onFill(f)}
                     options={[
                       { value: "even", label: "Chia đều", hint: "Mỗi ca, mỗi phòng đông gần bằng nhau, đơn vị rải đều" },
-                      { value: "field", label: "Theo lĩnh vực", hint: "Xếp hết lĩnh vực này mới sang lĩnh vực kế; trong một lĩnh vực các đơn vị được trộn vào nhau để không ngồi cạnh nhau" },
+                      { value: "field", label: "Theo lĩnh vực", hint: "Xếp lĩnh vực này trước rồi mới sang lĩnh vực kế; các đơn vị trong một lĩnh vực được trộn vào nhau" },
                     ]}
                   />
                 </div>
@@ -331,6 +331,9 @@ export function ResultStep({
                       </li>
                     ))}
                   </ol>
+                  <p className="max-w-md text-caption text-muted">
+                    Nếu một đơn vị quá đông thì phòng đó nhận thêm người lĩnh vực kế, hoặc xếp thêm ca, để không ai ngồi cạnh người cùng ĐV.
+                  </p>
                 </div>
               )}
               {!byField && <div

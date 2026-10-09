@@ -104,37 +104,84 @@ export function moveField(keys: string[], i: number, dir: -1 | 1): string[] {
   return next;
 }
 
-/**
- * Xếp theo lĩnh vực: lần lượt từng lĩnh vực (theo rank) chiếm ca 1 – phòng 1 cho đầy, hết chỗ thì sang phòng kế,
- * hết các phòng của ca thì sang ca kế. Trong phần các ô mà một lĩnh vực chiếm, các đơn vị được trộn đều
- * (như `distribute`) để lát nữa xếp ghế không phải để cả đơn vị ngồi liền nhau. Một ô có thể chứa đuôi của lĩnh vực
- * này và đầu của lĩnh vực kế. Trả groups[ca][phòng] = chỉ số người; ca nào còn dư thì để trống.
- */
-export function distributeByField(rank: number[], unitOf: number[], capacities: number[], sessions: number): number[][][] {
-  if (rank.length > sum(capacities) * sessions) throw new Error("Không đủ chỗ cho số ca này");
-  const R = capacities.length;
-  const room = Array.from({ length: sessions }, () => capacities.slice());
-  const groups = Array.from({ length: sessions }, () => capacities.map(() => [] as number[]));
-  const ranks = [...new Set(rank)].sort((a, b) => a - b);
-  let s = 0;
-  let r = 0;
-  for (const k of ranks) {
-    const members = rank.flatMap((x, i) => (x === k ? [i] : []));
-    // Lĩnh vực này chiếm bao nhiêu chỗ ở từng ô, tính từ ô còn dở của lĩnh vực trước.
-    const counts = Array.from({ length: sessions }, () => capacities.map(() => 0));
-    for (let left = members.length; left > 0; ) {
-      while (room[s][r] === 0) {
-        if (++r === R) { r = 0; s++; }
-      }
-      const take = Math.min(left, room[s][r]);
-      counts[s][r] = take;
-      room[s][r] -= take;
-      left -= take;
-    }
-    const part = distribute(members.map((p) => unitOf[p]), counts);
-    part.forEach((row, cs) => row.forEach((ids, cr) => ids.forEach((m) => groups[cs][cr].push(members[m]))));
+/** Một phòng khi chia theo lĩnh vực: sức chứa, và limit[p] = số người tối đa của một ĐV khi phòng có p người (`unitLimits`). */
+export interface FieldCell { capacity: number; limit: number[] }
+
+/** Ô không ràng buộc ĐV: chỉ dồn đầy theo sức chứa. */
+const looseCell = (c: FieldCell): FieldCell => ({ capacity: c.capacity, limit: c.limit.map(() => c.capacity) });
+
+/** Chọn người cho một ô từ hàng đợi `left` (theo thứ tự ưu tiên) rồi bỏ họ khỏi hàng đợi. */
+function fillCell(left: number[], unitOf: number[], cell: FieldCell): number[] {
+  const { capacity, limit } = cell;
+  const count = new Map<number, number>();
+  const chosen: number[] = []; // vị trí trong left
+  for (let k = 0; k < left.length && chosen.length < capacity; k++) {
+    const u = unitOf[left[k]];
+    if ((count.get(u) ?? 0) >= limit[capacity]) continue; // ĐV này đã đủ số người tối đa của phòng đầy, để dành ô sau
+    count.set(u, (count.get(u) ?? 0) + 1);
+    chosen.push(k);
   }
-  return groups;
+  // Phòng không đầy thì giới hạn thấp hơn: bớt người của ĐV còn vượt (người chọn sau cùng đi trước).
+  for (;;) {
+    const over = [...count].find(([, c]) => c > limit[chosen.length])?.[0];
+    if (over === undefined) break;
+    const at = chosen.findLastIndex((k) => unitOf[left[k]] === over);
+    chosen.splice(at, 1);
+    count.set(over, count.get(over)! - 1);
+  }
+  const people = chosen.map((k) => left[k]);
+  const gone = new Set(chosen);
+  left.splice(0, left.length, ...left.filter((_, k) => !gone.has(k)));
+  return people;
+}
+
+/**
+ * Xếp theo lĩnh vực: lần lượt từng lĩnh vực (theo rank) vào ca 1 – phòng 1 cho đầy, hết chỗ thì sang phòng kế,
+ * hết các phòng của ca thì sang ca kế. Trong một lĩnh vực các ĐV được trộn đều (người thứ k của ĐV có k/số người
+ * làm khoá, nên đầu hàng đợi luôn có đủ các ĐV theo tỉ lệ). Để không ai phải ngồi cạnh người cùng ĐV, một ĐV không
+ * được quá `limit` người trong một phòng: người vượt để dành cho phòng sau, ô còn chỗ thì lấy người lĩnh vực kế
+ * (trộn khác lĩnh vực) và nếu vẫn không đủ thì để trống chỗ, nên có thể cần nhiều ca hơn số ca ít nhất.
+ * Quá `maxSessions` ca thì bỏ giới hạn, dồn đầy theo sức chứa. Trả groups[ca][phòng] = chỉ số người.
+ */
+export function planByField(rank: number[], unitOf: number[], rooms: FieldCell[], maxSessions: number): number[][][] {
+  const capacity = sum(rooms.map((r) => r.capacity));
+  if (rank.length > capacity * maxSessions) throw new Error("Không đủ chỗ cho số ca này");
+  const queue: number[] = [];
+  for (const k of [...new Set(rank)].sort((a, b) => a - b)) {
+    const members = rank.flatMap((x, i) => (x === k ? [i] : []));
+    const size = new Map<number, number>();
+    members.forEach((p) => size.set(unitOf[p], (size.get(unitOf[p]) ?? 0) + 1));
+    const seen = new Map<number, number>();
+    const key = new Map(members.map((p) => {
+      const j = seen.get(unitOf[p]) ?? 0;
+      seen.set(unitOf[p], j + 1);
+      return [p, (j + 0.5) / size.get(unitOf[p])!];
+    }));
+    queue.push(...members.sort((a, b) => key.get(a)! - key.get(b)! || unitOf[a] - unitOf[b] || a - b));
+  }
+  const place = (cells: FieldCell[], max: number) => {
+    const left = queue.slice();
+    const groups: number[][][] = [];
+    // Còn lại toàn người của một ĐV mà phòng không thể nhận nổi (vd. máy dự phòng dồn cuối thì một ĐV đứng riêng
+    // không bao giờ ngồi cách nhau được): thêm ca cũng vô ích, từ đó dồn đầy như cũ, chỗ trùng sẽ được báo sau khi xếp.
+    let strict = true;
+    while (left.length && groups.length < max) {
+      const row = cells.map((cell) => {
+        if (strict) {
+          const before = left.slice();
+          const got = fillCell(left, unitOf, cell);
+          if (!(got.length < Math.min(cell.capacity, before.length) && got.length * 4 < cell.capacity)) return got;
+          left.splice(0, left.length, ...before);
+          strict = false;
+        }
+        return fillCell(left, unitOf, looseCell(cell));
+      });
+      if (row.every((x) => !x.length)) break;
+      groups.push(row);
+    }
+    return left.length ? null : groups;
+  };
+  return place(rooms, maxSessions) ?? place(rooms.map(looseCell), maxSessions)!;
 }
 
 /** Đổi chỗ hai ghế, có thể khác ca, khác phòng; ghế đích trống thì là chuyển sang. Trả bản sao mới. */

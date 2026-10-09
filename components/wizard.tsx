@@ -6,8 +6,8 @@ import { RoomStep, newEntry, type RoomEntry } from "./room-step";
 import { ListStep, type ListState } from "./list-step";
 import { ResultStep, type Plan } from "./result-step";
 import { buildNeighbors, buildSeats, sameExceptName } from "@/lib/room";
-import { evaluate } from "@/lib/seating";
-import { MAX_SESSIONS, capacityOf, distribute, distributeByField, fieldList, fieldRanks, minSessions, planCounts, swapSeats } from "@/lib/sessions";
+import { evaluate, unitLimits } from "@/lib/seating";
+import { MAX_SESSIONS, capacityOf, distribute, fieldList, fieldRanks, minSessions, planByField, planCounts, swapSeats } from "@/lib/sessions";
 import type { Adjacency, FillMode, SeatRef, SpareMode } from "@/lib/types";
 import type { ArrangeMessage, ArrangeRequest } from "@/lib/arrange.worker";
 
@@ -39,8 +39,9 @@ export default function Wizard() {
   const minS = minSessions(people.length, capacities);
   const hasField = !!list?.analysis.hasField && people.some((p) => p.field);
   const byField = fill === "field" && hasField;
-  // Xếp theo lĩnh vực thì dồn đầy từng phòng nên chỉ dùng đúng số ca ít nhất.
-  const sessions = byField ? minS : Math.max(minS, sessionsPick ?? 0);
+  const evenSessions = Math.max(minS, sessionsPick ?? 0);
+  // Xếp theo lĩnh vực tự tính số ca (có thể hơn số ca ít nhất để không ai ngồi cạnh người cùng ĐV).
+  const sessions = byField ? (result?.slots.length ?? minS) : evenSessions;
   const canArrange = rooms.length > 0 && listOk && minS <= MAX_SESSIONS;
 
   // Mọi thay đổi đầu vào đều làm kết quả cũ hết hiệu lực.
@@ -74,6 +75,20 @@ export default function Wizard() {
 
   const canGo = (s: Step) => s === 1 || (s === 2 && rooms.length > 0) || (s === 3 && canArrange);
 
+  /** Sức chứa và giới hạn người cùng ĐV trong một phòng, theo kiểu kề và cách để máy trống đang chọn. */
+  function fieldCells(nextAdj: Adjacency, nextSpare: SpareMode) {
+    return rooms.map((room, k) => {
+      const seats = seatsOf[k];
+      return {
+        capacity: capacities[k],
+        limit: unitLimits(buildNeighbors(room, seats, nextAdj), seats.length, capacities[k], nextSpare, {
+          exactPath: nextAdj === "lr",
+          bipartite: nextAdj === "lrfb" ? (i) => ((seats[i].row + seats[i].gcol) % 2) as 0 | 1 : undefined,
+        }),
+      };
+    });
+  }
+
   /** keep: giữ nguyên ai ở ca nào, phòng nào (kể cả người đã chuyển tay), chỉ xếp lại ghế trong từng phòng. */
   function run({ nextAdj = adj, nextSpare = spare, nextSessions = sessions, nextByField = byField, nextFieldOrder = fieldOrder, keep = true } = {}) {
     if (!canArrange) return;
@@ -82,7 +97,7 @@ export default function Wizard() {
       keep && result && result.slots.length === nextSessions
         ? result.slots.map((row) => row.map((x) => x.items.filter((p) => p >= 0)))
         : nextByField
-          ? distributeByField(fieldRanks(people.map((p) => p.field), nextFieldOrder), unitOf, capacities, nextSessions)
+          ? planByField(fieldRanks(people.map((p) => p.field), nextFieldOrder), unitOf, fieldCells(nextAdj, nextSpare), MAX_SESSIONS)
           : distribute(unitOf, planCounts(people.length, capacities, nextSessions));
     const worker = new Worker(new URL("../lib/arrange.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = worker;
@@ -181,7 +196,7 @@ export default function Wizard() {
             onFill={(f) => {
               if (keepEdits("Đổi cách chia sẽ chia lại người vào các ca và các phòng; những chỗ bạn đã đổi tay sẽ mất. Tiếp tục?")) return;
               setFill(f);
-              run({ nextByField: f === "field", nextSessions: f === "field" ? minS : sessions, keep: false });
+              run({ nextByField: f === "field", nextSessions: evenSessions, keep: false });
             }}
             onAdj={(a) => { if (keepEdits(RESEAT)) return; setAdj(a); run({ nextAdj: a }); }}
             onSpare={(s) => { if (keepEdits(RESEAT)) return; setSpare(s); run({ nextSpare: s }); }}
